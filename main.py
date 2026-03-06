@@ -31,6 +31,7 @@ DEEPSEEK_TIMEOUT = 30
 SERVERCHAN_TIMEOUT = 10
 
 DEDUP_MAX_SIZE = 5000
+DEFAULT_RECENT_NEWS_LIMIT = 5
 
 PROMPT_TEMPLATE = """你是一名专业的 Web3 / 加密货币市场分析师，擅长根据突发新闻快速判断市场影响。
 任务：当我提供一条新闻时，请快速判断该新闻对 Web3 市场及相关加密货币的影响。
@@ -68,6 +69,8 @@ class AppConfig:
 
     deepseek_api_key: str
     serverchan_sendkey: str
+    store_file: str
+    recent_news_limit: int
 
 
 @dataclass
@@ -84,8 +87,50 @@ class NewsItem:
         return datetime.fromtimestamp(self.timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+class PersistentRecentStore:
+    """本地持久化最近新闻 key，仅保留最新 N 条。"""
+
+    def __init__(self, file_path: str, max_items: int = DEFAULT_RECENT_NEWS_LIMIT) -> None:
+        self.file_path = Path(file_path)
+        self.max_items = max_items
+        self._lock = threading.Lock()
+        self._keys: Deque[str] = deque(maxlen=max_items)
+        self._load()
+
+    def _load(self) -> None:
+        if not self.file_path.exists():
+            return
+
+        try:
+            data = json.loads(self.file_path.read_text(encoding="utf-8"))
+            keys = data.get("keys", []) if isinstance(data, dict) else []
+            if isinstance(keys, list):
+                for key in keys[-self.max_items :]:
+                    if isinstance(key, str) and key.strip():
+                        self._keys.append(key)
+            logging.info("已加载本地消息缓存: %s (%d 条)", self.file_path, len(self._keys))
+        except Exception as exc:
+            logging.warning("读取本地消息缓存失败，将使用空缓存: %s", exc)
+
+    def _persist(self) -> None:
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"keys": list(self._keys)}
+        self.file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def contains(self, key: str) -> bool:
+        with self._lock:
+            return key in self._keys
+
+    def add(self, key: str) -> None:
+        with self._lock:
+            if key in self._keys:
+                return
+            self._keys.append(key)
+            self._persist()
+
+
 class Deduplicator:
-    """使用内存缓存去重，支持固定上限，避免无限增长。"""
+    """进程内去重缓存（用于高频重复消息）。"""
 
     def __init__(self, max_size: int = DEDUP_MAX_SIZE) -> None:
         self.max_size = max_size
@@ -106,7 +151,7 @@ class Deduplicator:
 
 
 def load_config(config_path: str) -> AppConfig:
-    """从 JSON 配置文件加载密钥。"""
+    """从 JSON 配置文件加载密钥和运行参数。"""
     path = Path(config_path)
     if not path.exists():
         raise RuntimeError(f"配置文件不存在: {path}")
@@ -119,13 +164,27 @@ def load_config(config_path: str) -> AppConfig:
 
     deepseek_api_key = str(data.get("deepseek_api_key", "")).strip()
     serverchan_sendkey = str(data.get("serverchan_sendkey", "")).strip()
+    store_file = str(data.get("store_file", "seen_news.json")).strip() or "seen_news.json"
+
+    recent_news_limit_raw = data.get("recent_news_limit", DEFAULT_RECENT_NEWS_LIMIT)
+    try:
+        recent_news_limit = int(recent_news_limit_raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("配置文件 recent_news_limit 必须为整数") from exc
 
     if not deepseek_api_key:
         raise RuntimeError("配置文件缺少 deepseek_api_key")
     if not serverchan_sendkey:
         raise RuntimeError("配置文件缺少 serverchan_sendkey")
+    if recent_news_limit <= 0:
+        raise RuntimeError("配置文件 recent_news_limit 必须大于 0")
 
-    return AppConfig(deepseek_api_key=deepseek_api_key, serverchan_sendkey=serverchan_sendkey)
+    return AppConfig(
+        deepseek_api_key=deepseek_api_key,
+        serverchan_sendkey=serverchan_sendkey,
+        store_file=store_file,
+        recent_news_limit=recent_news_limit,
+    )
 
 
 def build_dedup_key(item: NewsItem) -> str:
@@ -168,8 +227,7 @@ def analyze_with_deepseek(api_key: str, news_title: str) -> str:
         resp = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=DEEPSEEK_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
-        content = data["choices"][0]["message"]["content"].strip()
-        return content
+        return data["choices"][0]["message"]["content"].strip()
     except Exception as exc:
         logging.exception("DeepSeek 调用失败: %s", exc)
         return "AI 分析暂时不可用（DeepSeek API 调用失败）。"
@@ -201,7 +259,6 @@ def parse_ws_message(raw: str) -> Optional[NewsItem]:
 
     if not title:
         return None
-
     if not isinstance(timestamp, int):
         timestamp = int(time.time())
 
@@ -215,8 +272,6 @@ def parse_ws_message(raw: str) -> Optional[NewsItem]:
 
 def websocket_listener(stop_event: threading.Event):
     """持续监听 WebSocket；断开时重连。"""
-    # 某些环境会通过 HTTP(S)_PROXY 注入无效代理（例如本地 unix socket），
-    # 导致 websocket-client 报 [Errno 2] No such file or directory。
     while not stop_event.is_set():
         ws = None
         try:
@@ -248,26 +303,49 @@ def websocket_listener(stop_event: threading.Event):
                     pass
 
 
+def process_news_item(
+    item: NewsItem,
+    dedup: Deduplicator,
+    store: PersistentRecentStore,
+    sendkey: str,
+    deepseek_api_key: str,
+) -> bool:
+    """处理消息并写入本地存储；返回 True 表示已推送，False 表示被跳过。"""
+    key = build_dedup_key(item)
+    if dedup.seen(key):
+        return False
+    if store.contains(key):
+        return False
+
+    handle_news(item, sendkey, deepseek_api_key)
+    store.add(key)
+    return True
+
+
 def rss_fallback(
     dedup: Deduplicator,
+    store: PersistentRecentStore,
     sendkey: str,
     deepseek_api_key: str,
     stop_event: threading.Event,
     max_cycles: int = 1,
+    recent_limit: int = DEFAULT_RECENT_NEWS_LIMIT,
 ) -> None:
     """RSS 轮询后备逻辑。
 
-    为了保证 "WebSocket 优先"，fallback 每次仅执行有限轮询，然后返回主循环重试 WebSocket。
+    每轮只读取最新 N 条；若命中本地存储里的已处理消息，则停止本轮推送。
     """
     logging.info("进入 RSS fallback 模式: %s", RSS_URL)
     cycles = 0
+
     while not stop_event.is_set() and cycles < max_cycles:
         try:
             feed = feedparser.parse(RSS_URL)
-            entries = feed.entries[:20]
+            entries = feed.entries[:recent_limit]
             now_ts = int(time.time())
 
-            for entry in reversed(entries):
+            # RSS 通常是新到旧：遇到已存在消息后，说明更旧消息也无需推送。
+            for entry in entries:
                 title = str(getattr(entry, "title", "")).strip()
                 url = str(getattr(entry, "link", "")).strip()
                 if not title:
@@ -275,9 +353,11 @@ def rss_fallback(
 
                 item = NewsItem(title=title, url=url, timestamp=now_ts, source="RSS")
                 key = build_dedup_key(item)
-                if dedup.seen(key):
-                    continue
-                handle_news(item, sendkey, deepseek_api_key)
+                if store.contains(key):
+                    logging.info("RSS 命中本地存储，停止本轮推送: %s", title)
+                    break
+
+                process_news_item(item, dedup, store, sendkey, deepseek_api_key)
 
         except Exception as exc:
             logging.exception("RSS fallback 轮询异常: %s", exc)
@@ -289,6 +369,7 @@ def rss_fallback(
 
 def main_loop(config: AppConfig) -> None:
     dedup = Deduplicator()
+    store = PersistentRecentStore(config.store_file, max_items=config.recent_news_limit)
     stop_event = threading.Event()
 
     def _signal_handler(signum, frame):
@@ -305,19 +386,22 @@ def main_loop(config: AppConfig) -> None:
             while not stop_event.is_set():
                 state, item = next(ws_stream)
                 if state == "connected" and item is not None:
-                    key = build_dedup_key(item)
-                    if dedup.seen(key):
-                        logging.debug("跳过重复新闻: %s", item.title)
-                        continue
-                    handle_news(item, config.serverchan_sendkey, config.deepseek_api_key)
+                    process_news_item(
+                        item,
+                        dedup,
+                        store,
+                        config.serverchan_sendkey,
+                        config.deepseek_api_key,
+                    )
                 elif state == "disconnected":
-                    # WS 异常时，执行一次 RSS 轮询后即回到 WS 重试，保证 WS 优先。
                     rss_fallback(
                         dedup,
+                        store,
                         config.serverchan_sendkey,
                         config.deepseek_api_key,
                         stop_event,
                         max_cycles=1,
+                        recent_limit=config.recent_news_limit,
                     )
                     break
         except StopIteration:

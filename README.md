@@ -27,14 +27,19 @@ pip install -r requirements.txt
 cp config.example.json config.json
 ```
 
-2. 编辑 `config.json`，填入你的密钥：
+2. 编辑 `config.json`：
 
 ```json
 {
   "deepseek_api_key": "你的 DeepSeek Key",
-  "serverchan_sendkey": "你的 server酱 SendKey"
+  "serverchan_sendkey": "你的 server酱 SendKey",
+  "store_file": "seen_news.json",
+  "recent_news_limit": 5
 }
 ```
+
+- `store_file`：本地存储文件，用于记录最近已推送消息（重启后继续去重）。
+- `recent_news_limit`：只处理最新 N 条消息（默认 5）。
 
 ## 运行
 
@@ -50,17 +55,19 @@ python main.py
 python main.py --config /path/to/config.json
 ```
 
+## 行为说明（本次更新重点）
+
+- 仅处理最新 `recent_news_limit` 条消息（默认 5 条）。
+- 增加本地持久化去重：消息推送成功后会写入 `store_file`。
+- 重新启动监控时，若在最新消息中命中本地已存在消息，会停止本轮继续推送（避免重复轰炸）。
+- WebSocket 与 RSS 都可用时，仍优先 WebSocket（低延迟）。
+
 ## 程序结构
 
-- `load_config()`：从 JSON 配置文件读取密钥
+- `load_config()`：从 JSON 配置文件读取密钥和参数
+- `PersistentRecentStore`：本地持久化最新消息 key
 - `websocket_listener()`：WebSocket 实时监听 + 自动重连
-- `rss_fallback()`：RSS 轮询后备
+- `rss_fallback()`：RSS 后备（仅拉取最新 N 条 + 命中即停止本轮）
 - `analyze_with_deepseek()`：调用 DeepSeek Chat API
 - `send_serverchan()`：推送 server酱
 - `main_loop()`：主调度循环
-
-## 说明
-
-- 若 WebSocket 与 RSS 都可用，程序会优先处理 WebSocket（低延迟）。
-- 去重使用内存缓存（固定上限），适合长期运行。
-- 程序已包含日志输出和基础错误处理。

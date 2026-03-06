@@ -1,4 +1,6 @@
 {
   "deepseek_api_key": "your_deepseek_api_key",
-  "serverchan_sendkey": "your_serverchan_sendkey"
+  "serverchan_sendkey": "your_serverchan_sendkey",
+  "store_file": "seen_news.json",
+  "recent_news_limit": 5
 }

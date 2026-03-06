@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
-import os
 import signal
 import sys
 import threading
@@ -13,6 +13,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Deque, Optional
 
 import feedparser
@@ -22,7 +23,6 @@ import websocket
 WS_URL = "wss://bwenews-api.bwe-ws.com/ws"
 RSS_URL = "https://rss-public.bwe-ws.com/"
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
-
 SERVERCHAN_ENDPOINT = "https://sctapi.ftqq.com/{sendkey}.send"
 
 WS_RECONNECT_DELAY = 5
@@ -63,6 +63,14 @@ XXX | 利多/利空 | X%
 
 
 @dataclass
+class AppConfig:
+    """运行配置。"""
+
+    deepseek_api_key: str
+    serverchan_sendkey: str
+
+
+@dataclass
 class NewsItem:
     """统一的新闻结构。"""
 
@@ -95,6 +103,29 @@ class Deduplicator:
                 removed = self._queue.popleft()
                 self._keys.discard(removed)
             return False
+
+
+def load_config(config_path: str) -> AppConfig:
+    """从 JSON 配置文件加载密钥。"""
+    path = Path(config_path)
+    if not path.exists():
+        raise RuntimeError(f"配置文件不存在: {path}")
+
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"配置文件 JSON 格式错误: {path} ({exc})") from exc
+
+    deepseek_api_key = str(data.get("deepseek_api_key", "")).strip()
+    serverchan_sendkey = str(data.get("serverchan_sendkey", "")).strip()
+
+    if not deepseek_api_key:
+        raise RuntimeError("配置文件缺少 deepseek_api_key")
+    if not serverchan_sendkey:
+        raise RuntimeError("配置文件缺少 serverchan_sendkey")
+
+    return AppConfig(deepseek_api_key=deepseek_api_key, serverchan_sendkey=serverchan_sendkey)
 
 
 def build_dedup_key(item: NewsItem) -> str:
@@ -238,19 +269,12 @@ def rss_fallback(dedup: Deduplicator, sendkey: str, deepseek_api_key: str, stop_
             break
 
 
-def main_loop() -> None:
-    deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    sendkey = os.getenv("SERVERCHAN_SENDKEY", "").strip()
-
-    if not deepseek_api_key:
-        raise RuntimeError("缺少环境变量 DEEPSEEK_API_KEY")
-    if not sendkey:
-        raise RuntimeError("缺少环境变量 SERVERCHAN_SENDKEY")
-
+def main_loop(config: AppConfig) -> None:
     dedup = Deduplicator()
     stop_event = threading.Event()
 
     def _signal_handler(signum, frame):
+        del frame
         logging.info("收到退出信号(%s)，准备停止...", signum)
         stop_event.set()
 
@@ -266,15 +290,26 @@ def main_loop() -> None:
                 if dedup.seen(key):
                     logging.debug("跳过重复新闻: %s", item.title)
                     continue
-                handle_news(item, sendkey, deepseek_api_key)
+                handle_news(item, config.serverchan_sendkey, config.deepseek_api_key)
             elif state == "disconnected":
-                rss_fallback(dedup, sendkey, deepseek_api_key, stop_event)
+                rss_fallback(dedup, config.serverchan_sendkey, config.deepseek_api_key, stop_event)
         except StopIteration:
             break
         except Exception as exc:
             logging.exception("主循环异常: %s", exc)
             if stop_event.wait(2):
                 break
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="BWEnews 实时监控与 AI 分析推送")
+    parser.add_argument(
+        "-c",
+        "--config",
+        default="config.json",
+        help="配置文件路径（默认: config.json）",
+    )
+    return parser.parse_args()
 
 
 def setup_logging() -> None:
@@ -287,4 +322,6 @@ def setup_logging() -> None:
 
 if __name__ == "__main__":
     setup_logging()
-    main_loop()
+    args = parse_args()
+    app_config = load_config(args.config)
+    main_loop(app_config)

@@ -19,21 +19,40 @@
 pip install -r requirements.txt
 ```
 
-## 配置环境变量
+## 配置文件（不使用环境变量）
+
+1. 复制示例配置：
 
 ```bash
-export DEEPSEEK_API_KEY="你的 DeepSeek Key"
-export SERVERCHAN_SENDKEY="你的 server酱 SendKey"
+cp config.example.json config.json
+```
+
+2. 编辑 `config.json`，填入你的密钥：
+
+```json
+{
+  "deepseek_api_key": "你的 DeepSeek Key",
+  "serverchan_sendkey": "你的 server酱 SendKey"
+}
 ```
 
 ## 运行
+
+默认读取当前目录下 `config.json`：
 
 ```bash
 python main.py
 ```
 
+也可以指定配置路径：
+
+```bash
+python main.py --config /path/to/config.json
+```
+
 ## 程序结构
 
+- `load_config()`：从 JSON 配置文件读取密钥
 - `websocket_listener()`：WebSocket 实时监听 + 自动重连
 - `rss_fallback()`：RSS 轮询后备
 - `analyze_with_deepseek()`：调用 DeepSeek Chat API

@@ -215,11 +215,18 @@ def parse_ws_message(raw: str) -> Optional[NewsItem]:
 
 def websocket_listener(stop_event: threading.Event):
     """持续监听 WebSocket；断开时重连。"""
+    # 某些环境会通过 HTTP(S)_PROXY 注入无效代理（例如本地 unix socket），
+    # 导致 websocket-client 报 [Errno 2] No such file or directory。
     while not stop_event.is_set():
         ws = None
         try:
             logging.info("尝试连接 WebSocket: %s", WS_URL)
-            ws = websocket.create_connection(WS_URL, timeout=15)
+            ws = websocket.create_connection(
+                WS_URL,
+                timeout=15,
+                http_proxy_host=None,
+                http_proxy_port=None,
+            )
             logging.info("WebSocket 已连接")
 
             while not stop_event.is_set():
@@ -241,10 +248,20 @@ def websocket_listener(stop_event: threading.Event):
                     pass
 
 
-def rss_fallback(dedup: Deduplicator, sendkey: str, deepseek_api_key: str, stop_event: threading.Event) -> None:
-    """RSS 轮询后备逻辑。"""
+def rss_fallback(
+    dedup: Deduplicator,
+    sendkey: str,
+    deepseek_api_key: str,
+    stop_event: threading.Event,
+    max_cycles: int = 1,
+) -> None:
+    """RSS 轮询后备逻辑。
+
+    为了保证 "WebSocket 优先"，fallback 每次仅执行有限轮询，然后返回主循环重试 WebSocket。
+    """
     logging.info("进入 RSS fallback 模式: %s", RSS_URL)
-    while not stop_event.is_set():
+    cycles = 0
+    while not stop_event.is_set() and cycles < max_cycles:
         try:
             feed = feedparser.parse(RSS_URL)
             entries = feed.entries[:20]
@@ -265,7 +282,8 @@ def rss_fallback(dedup: Deduplicator, sendkey: str, deepseek_api_key: str, stop_
         except Exception as exc:
             logging.exception("RSS fallback 轮询异常: %s", exc)
 
-        if stop_event.wait(RSS_POLL_INTERVAL):
+        cycles += 1
+        if cycles < max_cycles and stop_event.wait(RSS_POLL_INTERVAL):
             break
 
 
@@ -281,18 +299,27 @@ def main_loop(config: AppConfig) -> None:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    ws_stream = websocket_listener(stop_event)
     while not stop_event.is_set():
+        ws_stream = websocket_listener(stop_event)
         try:
-            state, item = next(ws_stream)
-            if state == "connected" and item is not None:
-                key = build_dedup_key(item)
-                if dedup.seen(key):
-                    logging.debug("跳过重复新闻: %s", item.title)
-                    continue
-                handle_news(item, config.serverchan_sendkey, config.deepseek_api_key)
-            elif state == "disconnected":
-                rss_fallback(dedup, config.serverchan_sendkey, config.deepseek_api_key, stop_event)
+            while not stop_event.is_set():
+                state, item = next(ws_stream)
+                if state == "connected" and item is not None:
+                    key = build_dedup_key(item)
+                    if dedup.seen(key):
+                        logging.debug("跳过重复新闻: %s", item.title)
+                        continue
+                    handle_news(item, config.serverchan_sendkey, config.deepseek_api_key)
+                elif state == "disconnected":
+                    # WS 异常时，执行一次 RSS 轮询后即回到 WS 重试，保证 WS 优先。
+                    rss_fallback(
+                        dedup,
+                        config.serverchan_sendkey,
+                        config.deepseek_api_key,
+                        stop_event,
+                        max_cycles=1,
+                    )
+                    break
         except StopIteration:
             break
         except Exception as exc:

@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Deque, Optional
@@ -65,8 +65,6 @@ XXX | 利多/利空 | X%
 
 @dataclass
 class AppConfig:
-    """运行配置。"""
-
     deepseek_api_key: str
     serverchan_sendkey: str
     store_file: str
@@ -75,12 +73,11 @@ class AppConfig:
 
 @dataclass
 class NewsItem:
-    """统一的新闻结构。"""
-
     title: str
     url: str
     timestamp: int
     source: str
+    coins: list[str] = field(default_factory=list)
 
     @property
     def dt_str(self) -> str:
@@ -100,7 +97,6 @@ class PersistentRecentStore:
     def _load(self) -> None:
         if not self.file_path.exists():
             return
-
         try:
             data = json.loads(self.file_path.read_text(encoding="utf-8"))
             keys = data.get("keys", []) if isinstance(data, dict) else []
@@ -151,14 +147,12 @@ class Deduplicator:
 
 
 def load_config(config_path: str) -> AppConfig:
-    """从 JSON 配置文件加载密钥和运行参数。"""
     path = Path(config_path)
     if not path.exists():
         raise RuntimeError(f"配置文件不存在: {path}")
 
     try:
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"配置文件 JSON 格式错误: {path} ({exc})") from exc
 
@@ -192,7 +186,6 @@ def build_dedup_key(item: NewsItem) -> str:
 
 
 def send_serverchan(sendkey: str, title: str, body: str) -> None:
-    """推送消息到 server酱。"""
     endpoint = SERVERCHAN_ENDPOINT.format(sendkey=sendkey)
     payload = {"title": title, "desp": body}
     try:
@@ -208,7 +201,6 @@ def send_serverchan(sendkey: str, title: str, body: str) -> None:
 
 
 def analyze_with_deepseek(api_key: str, news_title: str) -> str:
-    """调用 DeepSeek Chat API 分析新闻。"""
     prompt = PROMPT_TEMPLATE.format(news=news_title)
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -222,7 +214,6 @@ def analyze_with_deepseek(api_key: str, news_title: str) -> str:
         ],
         "temperature": 0.2,
     }
-
     try:
         resp = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=DEEPSEEK_TIMEOUT)
         resp.raise_for_status()
@@ -233,20 +224,35 @@ def analyze_with_deepseek(api_key: str, news_title: str) -> str:
         return "AI 分析暂时不可用（DeepSeek API 调用失败）。"
 
 
-def handle_news(item: NewsItem, sendkey: str, deepseek_api_key: str) -> None:
-    """处理单条新闻：推送快讯 -> AI分析 -> 推送分析。"""
+def format_news_quick_message(item: NewsItem) -> str:
+    coin_text = ", ".join(item.coins) if item.coins else "未提及"
+    return (
+        f"### {item.title}\n\n"
+        f"- 来源：`{item.source}`\n"
+        f"- 时间：`{item.dt_str}`\n"
+        f"- 相关币：`{coin_text}`\n"
+        f"- 链接：{item.url or '无'}"
+    )
+
+
+def format_news_analysis_message(item: NewsItem, analysis: str) -> str:
+    return f"### {item.title}\n\n{analysis}"
+
+
+def handle_news(item: NewsItem, sendkey: str, deepseek_api_key: str, do_analysis: bool = True) -> None:
     logging.info("接收到新闻: %s", item.title)
 
-    quick_body = f"{item.title}\n{item.url}\n{item.dt_str}"
-    send_serverchan(sendkey, "BWEnews 快讯", quick_body)
+    send_serverchan(sendkey, "BWEnews 快讯", format_news_quick_message(item))
+
+    if not do_analysis:
+        logging.info("跳过 AI 分析（节省算力）: %s", item.title)
+        return
 
     analysis = analyze_with_deepseek(deepseek_api_key, item.title)
-    analysis_body = f"{item.title}\n\n{analysis}"
-    send_serverchan(sendkey, "AI新闻分析", analysis_body)
+    send_serverchan(sendkey, "AI新闻分析", format_news_analysis_message(item, analysis))
 
 
 def parse_ws_message(raw: str) -> Optional[NewsItem]:
-    """解析 WebSocket 消息。"""
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -256,22 +262,27 @@ def parse_ws_message(raw: str) -> Optional[NewsItem]:
     title = str(data.get("news_title", "")).strip()
     url = str(data.get("url", "")).strip()
     timestamp = data.get("timestamp")
+    coins_raw = data.get("coins_included", [])
 
     if not title:
         return None
     if not isinstance(timestamp, int):
         timestamp = int(time.time())
 
+    coins: list[str] = []
+    if isinstance(coins_raw, list):
+        coins = [str(c).strip() for c in coins_raw if str(c).strip()]
+
     return NewsItem(
         title=title,
         url=url,
         timestamp=timestamp,
         source=str(data.get("source_name", "BWENEWS")),
+        coins=coins,
     )
 
 
 def websocket_listener(stop_event: threading.Event):
-    """持续监听 WebSocket；断开时重连。"""
     while not stop_event.is_set():
         ws = None
         try:
@@ -309,17 +320,64 @@ def process_news_item(
     store: PersistentRecentStore,
     sendkey: str,
     deepseek_api_key: str,
+    do_analysis: bool,
 ) -> bool:
-    """处理消息并写入本地存储；返回 True 表示已推送，False 表示被跳过。"""
     key = build_dedup_key(item)
     if dedup.seen(key):
         return False
     if store.contains(key):
         return False
 
-    handle_news(item, sendkey, deepseek_api_key)
+    handle_news(item, sendkey, deepseek_api_key, do_analysis=do_analysis)
     store.add(key)
     return True
+
+
+def build_news_item_from_rss_entry(entry, now_ts: int) -> Optional[NewsItem]:
+    title = str(getattr(entry, "title", "")).strip()
+    if not title:
+        return None
+    url = str(getattr(entry, "link", "")).strip()
+    return NewsItem(title=title, url=url, timestamp=now_ts, source="RSS")
+
+
+def bootstrap_latest_from_rss(
+    dedup: Deduplicator,
+    store: PersistentRecentStore,
+    sendkey: str,
+    deepseek_api_key: str,
+    recent_limit: int,
+) -> None:
+    """启动时快速处理最新 N 条：仅分析最新1条，其余只发快讯。"""
+    try:
+        feed = feedparser.parse(RSS_URL)
+        entries = feed.entries[:recent_limit]
+        now_ts = int(time.time())
+
+        analyzed_once = False
+        for entry in entries:
+            item = build_news_item_from_rss_entry(entry, now_ts)
+            if item is None:
+                continue
+
+            key = build_dedup_key(item)
+            if store.contains(key):
+                logging.info("启动阶段命中本地存储，停止补发: %s", item.title)
+                break
+
+            pushed = process_news_item(
+                item,
+                dedup,
+                store,
+                sendkey,
+                deepseek_api_key,
+                do_analysis=not analyzed_once,
+            )
+            if pushed and not analyzed_once:
+                analyzed_once = True
+
+    except Exception as exc:
+        logging.warning("启动阶段 RSS 预热失败，继续 WebSocket 实时监听: %s", exc)
 
 
 def rss_fallback(
@@ -331,10 +389,6 @@ def rss_fallback(
     max_cycles: int = 1,
     recent_limit: int = DEFAULT_RECENT_NEWS_LIMIT,
 ) -> None:
-    """RSS 轮询后备逻辑。
-
-    每轮只读取最新 N 条；若命中本地存储里的已处理消息，则停止本轮推送。
-    """
     logging.info("进入 RSS fallback 模式: %s", RSS_URL)
     cycles = 0
 
@@ -344,20 +398,24 @@ def rss_fallback(
             entries = feed.entries[:recent_limit]
             now_ts = int(time.time())
 
-            # RSS 通常是新到旧：遇到已存在消息后，说明更旧消息也无需推送。
             for entry in entries:
-                title = str(getattr(entry, "title", "")).strip()
-                url = str(getattr(entry, "link", "")).strip()
-                if not title:
+                item = build_news_item_from_rss_entry(entry, now_ts)
+                if item is None:
                     continue
 
-                item = NewsItem(title=title, url=url, timestamp=now_ts, source="RSS")
                 key = build_dedup_key(item)
                 if store.contains(key):
-                    logging.info("RSS 命中本地存储，停止本轮推送: %s", title)
+                    logging.info("RSS 命中本地存储，停止本轮推送: %s", item.title)
                     break
 
-                process_news_item(item, dedup, store, sendkey, deepseek_api_key)
+                process_news_item(
+                    item,
+                    dedup,
+                    store,
+                    sendkey,
+                    deepseek_api_key,
+                    do_analysis=False,
+                )
 
         except Exception as exc:
             logging.exception("RSS fallback 轮询异常: %s", exc)
@@ -380,6 +438,15 @@ def main_loop(config: AppConfig) -> None:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
+    # 启动时先快速补齐最近消息：仅分析最新1条，尽快把关键信息推给你。
+    bootstrap_latest_from_rss(
+        dedup,
+        store,
+        config.serverchan_sendkey,
+        config.deepseek_api_key,
+        recent_limit=config.recent_news_limit,
+    )
+
     while not stop_event.is_set():
         ws_stream = websocket_listener(stop_event)
         try:
@@ -392,6 +459,7 @@ def main_loop(config: AppConfig) -> None:
                         store,
                         config.serverchan_sendkey,
                         config.deepseek_api_key,
+                        do_analysis=True,
                     )
                 elif state == "disconnected":
                     rss_fallback(
@@ -414,12 +482,7 @@ def main_loop(config: AppConfig) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BWEnews 实时监控与 AI 分析推送")
-    parser.add_argument(
-        "-c",
-        "--config",
-        default="config.json",
-        help="配置文件路径（默认: config.json）",
-    )
+    parser.add_argument("-c", "--config", default="config.json", help="配置文件路径（默认: config.json）")
     return parser.parse_args()
 
 

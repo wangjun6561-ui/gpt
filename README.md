@@ -5,7 +5,7 @@
 1. **优先通过 WebSocket** 实时监听 BWEnews。
 2. WebSocket 不可用时自动切到 **RSS fallback**。
 3. 对新闻做去重，避免重复推送。
-4. 每条新闻先推送 `BWEnews 快讯` 到 server酱。
+4. 每条新闻先推送 `BWEnews 快讯`（更清晰的 Markdown 排版）。
 5. 再调用 DeepSeek (`deepseek-chat`) 做市场影响分析。
 6. 将分析结果再次推送到 server酱 (`AI新闻分析`)。
 
@@ -43,31 +43,20 @@ cp config.example.json config.json
 
 ## 运行
 
-默认读取当前目录下 `config.json`：
-
 ```bash
 python main.py
 ```
 
-也可以指定配置路径：
+或指定配置路径：
 
 ```bash
 python main.py --config /path/to/config.json
 ```
 
-## 行为说明（本次更新重点）
+## 行为说明（本次优化）
 
-- 仅处理最新 `recent_news_limit` 条消息（默认 5 条）。
-- 增加本地持久化去重：消息推送成功后会写入 `store_file`。
-- 重新启动监控时，若在最新消息中命中本地已存在消息，会停止本轮继续推送（避免重复轰炸）。
-- WebSocket 与 RSS 都可用时，仍优先 WebSocket（低延迟）。
-
-## 程序结构
-
-- `load_config()`：从 JSON 配置文件读取密钥和参数
-- `PersistentRecentStore`：本地持久化最新消息 key
-- `websocket_listener()`：WebSocket 实时监听 + 自动重连
-- `rss_fallback()`：RSS 后备（仅拉取最新 N 条 + 命中即停止本轮）
-- `analyze_with_deepseek()`：调用 DeepSeek Chat API
-- `send_serverchan()`：推送 server酱
-- `main_loop()`：主调度循环
+- 启动阶段会快速检查最新 `recent_news_limit` 条消息。
+- 如果启动时有多条新消息：**只对最新 1 条做 AI 分析**，其余仅发快讯（节省算力并保证推送速度）。
+- 若启动阶段命中本地已处理消息，会立即停止继续补发更旧消息。
+- `BWEnews 快讯` 已改为更直观格式：标题 + 来源 + 时间 + 相关币 + 链接。
+- 正常运行后，实时 WebSocket 新消息仍会进行完整 AI 分析。

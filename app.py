@@ -53,6 +53,15 @@ class OKXMonitor:
 
         self._load_trades_history()
 
+    @property
+    def http_headers(self) -> Dict[str, str]:
+        return {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://www.okx.com/",
+            "Origin": "https://www.okx.com",
+        }
+
     def _log_debug(self, message: str):
         if self.debug:
             print(f"[DEBUG] {message}")
@@ -84,7 +93,13 @@ class OKXMonitor:
             if os.path.exists(self.trades_history_file):
                 with open(self.trades_history_file, 'r', encoding='utf-8') as f:
                     history_data = json.load(f)
-                    self.previous_trades = history_data.get('trades', {})
+                    loaded = history_data.get('trades', {})
+                    normalized: Dict[str, List[str]] = {}
+                    for account, records in loaded.items():
+                        if not isinstance(records, list):
+                            continue
+                        normalized[account] = [str(r) if not isinstance(r, dict) else self._trade_id(r) for r in records]
+                    self.previous_trades = normalized
                     last_update = history_data.get('last_update', '')
                     if self.previous_trades:
                         print(f"✓ 已加载交易历史数据 (上次更新: {last_update})")
@@ -135,13 +150,20 @@ class OKXMonitor:
             query = urlencode(params)
             connector = '&' if '?' in url else '?'
             url = f"{url}{connector}{query}"
-        req = Request(url, headers={"User-Agent": "Mozilla/5.0"}, method="GET")
-        with urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        req = Request(url, headers=self.http_headers, method="GET")
+        try:
+            with urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except HTTPError as e:
+            raise RuntimeError(f"HTTP {e.code}") from e
+        except URLError as e:
+            raise RuntimeError(str(e)) from e
 
     def _http_post_json(self, url: str, data: Dict[str, Any]) -> Dict[str, Any]:
         body = json.dumps(data).encode("utf-8")
-        req = Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, method="POST")
+        headers = dict(self.http_headers)
+        headers["Content-Type"] = "application/json"
+        req = Request(url, data=body, headers=headers, method="POST")
         with urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
@@ -228,6 +250,15 @@ class OKXMonitor:
         for trader in self.traders:
             pos_data = self.fetch_okx_positions(trader.unique_name)
             if pos_data is None:
+                snapshot[trader.unique_name] = {
+                    "name": trader.name,
+                    "platform": trader.platform,
+                    "uniqueName": trader.unique_name,
+                    "hasPosition": False,
+                    "position": None,
+                    "rawCount": 0,
+                    "error": "拉取失败",
+                }
                 continue
             primary = self._pick_primary_position(pos_data)
             snapshot[trader.unique_name] = {
@@ -237,6 +268,7 @@ class OKXMonitor:
                 "hasPosition": bool(primary),
                 "position": self._position_to_view(primary) if primary else None,
                 "rawCount": len(pos_data),
+                "error": "",
             }
 
         sorted_items = sorted(
@@ -296,6 +328,8 @@ class OKXMonitor:
 ### 检测到 {len(notifications)} 笔新交易
 
 {summary_text}
+
+> 🔗 博主ID: `{unique_name}`
 
 > ⏰ 通知时间: {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}"""
         return {
@@ -360,10 +394,24 @@ class OKXMonitor:
 
     def _convert_markdown_to_html(self, content: str, platform: str = 'okx') -> str:
         import html
-        text = html.escape(content)
-        text = text.replace('## ', '<h2 style="color:#1f2937;margin:16px 0 10px;">')
-        text = text.replace('### ', '<h3 style="color:#374151;margin:12px 0 8px;">')
-        text = text.replace('\n', '<br>')
+        lines = html.escape(content).split("\n")
+        html_lines = []
+        for line in lines:
+            if line.startswith("## "):
+                html_lines.append(f'<h2 style="color:#1f2937;margin:16px 0 10px;">{line[3:]}</h2>')
+            elif line.startswith("### "):
+                html_lines.append(f'<h3 style="color:#374151;margin:12px 0 8px;">{line[4:]}</h3>')
+            elif line.startswith("> "):
+                html_lines.append(
+                    f'<blockquote style="border-left:4px solid #3b82f6;padding-left:12px;color:#6b7280;margin:10px 0;">{line[2:]}</blockquote>'
+                )
+            elif line.strip().startswith("- "):
+                html_lines.append(f"• {line[2:]}<br>")
+            elif line.strip() == "":
+                html_lines.append("<br>")
+            else:
+                html_lines.append(f"{line}<br>")
+        text = "\n".join(html_lines)
 
         gradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' if platform == 'okx' else 'linear-gradient(135deg, #f0b90b 0%, #f8d33a 100%)'
         title = 'OKX交易提醒' if platform == 'okx' else '币安交易提醒'
@@ -411,6 +459,8 @@ class OKXMonitor:
                 self.send_notification(notif['title'], notif['content'])
                 self.send_email(notif['title'], notif['content'], notif['platform'])
                 time.sleep(0.5)
+            # 本轮有交易后，立刻刷新持仓，网页马上更新
+            self.refresh_positions()
         else:
             self._log_debug("本轮无新交易")
 
@@ -450,6 +500,8 @@ h1{font-size:22px} .grid{display:grid;grid-template-columns:repeat(auto-fit,minm
 .muted{color:#94a3b8;font-size:12px}.danger{color:#f87171}.ok{color:#4ade80}
 .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#1f2a44;margin-left:6px;font-size:12px}
 .kv{display:flex;justify-content:space-between;padding:3px 0;font-size:14px}
+.err{color:#fca5a5;font-size:12px;margin-top:6px}
+@media (max-width: 640px){body{padding:10px}.card{padding:12px}.kv{font-size:13px}}
 </style></head><body>
 <h1>OKX 带单员持仓监控</h1><div class=\"muted\" id=\"meta\">加载中...</div><div class=\"grid\" id=\"cards\"></div>
 <script>
@@ -461,7 +513,7 @@ async function load(){
   const p=it.position;
   const div=document.createElement('div'); div.className='card';
   if(!it.hasPosition){
-   div.innerHTML=`<h3>${it.name}<span class='badge'>空仓</span></h3><div class='muted'>当前无持仓</div>`;
+   div.innerHTML=`<h3>${it.name}<span class='badge'>空仓</span></h3><div class='muted'>当前无持仓</div>${it.error?`<div class='err'>${it.error}</div>`:''}`;
   }else{
    div.innerHTML=`<h3>${it.name}<span class='badge'>${p.symbol}</span></h3>
    <div class='kv'><span>方向</span><span>${p.direction}</span></div>
@@ -473,7 +525,8 @@ async function load(){
    <div class='kv'><span>持仓价值</span><span>${p.notionalUsd}</span></div>
    <div class='kv'><span>收益</span><span>${p.upl}</span></div>
    <div class='kv'><span>保证金率</span><span class='${p.danger?"danger":"ok"}'>${p.mgnRate}</span></div>
-   <div class='kv'><span>预估爆仓价</span><span>${p.liqPx}</span></div>`;
+   <div class='kv'><span>预估爆仓价</span><span>${p.liqPx}</span></div>
+   ${it.error?`<div class='err'>${it.error}</div>`:''}`;
   }
   cards.appendChild(div);
  });

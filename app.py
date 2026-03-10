@@ -207,6 +207,31 @@ class OKXMonitor:
             pass
         return "多"
 
+    def _estimate_liq_price(self, pos: Dict[str, Any], direction: str, mgn_ratio: float) -> str:
+        """当接口未返回 liqPx 时，基于保证金率做近似估算。"""
+        try:
+            mark_px = float(pos.get("markPx", 0) or 0)
+            lever = max(float(pos.get("lever", 1) or 1), 1.0)
+        except (TypeError, ValueError):
+            return "--"
+
+        if mark_px <= 0:
+            return "--"
+
+        if mgn_ratio <= 1:
+            estimate = mark_px
+        else:
+            # 近似：保证金率降到 100% 触发爆仓，所需价格变化比例与杠杆反比
+            delta_ratio = (mgn_ratio - 1) / lever
+            if direction == "空":
+                estimate = mark_px * (1 + delta_ratio)
+            else:
+                estimate = mark_px * (1 - delta_ratio)
+
+        if estimate <= 0:
+            return "--"
+        return self.format_number(estimate, 8)
+
     def _position_to_view(self, pos: Dict[str, Any]) -> Dict[str, Any]:
         inst_id = str(pos.get("instId", ""))
         contract_value = float(self.contract_values.get(inst_id, 1))
@@ -217,11 +242,15 @@ class OKXMonitor:
         margin_value = float(pos.get("margin", 0) or 0)
         direction = self._infer_direction(pos)
 
+        api_liq = pos.get("liqPx")
+        liq_px = self.format_number(api_liq, 8) if api_liq not in (None, "", "--") else self._estimate_liq_price(pos, direction, mgn_ratio)
+
         return {
             "instId": inst_id,
             "symbol": inst_id.replace("-SWAP", "").replace("-", "/").lower(),
             "direction": direction,
             "lever": pos.get("lever", "0"),
+            "dirLev": f"{direction}{pos.get('lever', '0')}x",
             "avgPx": self.format_number(pos.get("avgPx", 0), 8),
             "uplRate": f"{upl_ratio * 100:.2f}%",
             "coinAmount": self.format_number(coin_amount, 6),
@@ -229,7 +258,7 @@ class OKXMonitor:
             "marginValue": margin_value,
             "notionalUsd": self.format_number(pos.get("notionalUsd", 0), 4),
             "upl": self.format_number(pos.get("upl", 0), 4),
-            "liqPx": self.format_number(pos.get("liqPx") or 0, 8) if pos.get("liqPx") else "--",
+            "liqPx": liq_px,
             "mgnRate": f"{mgn_ratio * 100:.2f}%",
             "danger": mgn_ratio < 1,
         }

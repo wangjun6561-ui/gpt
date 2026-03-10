@@ -4,103 +4,125 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OKX 带单监控</title>
-  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
-    :root{--bg:#0b1020;--card:#151c32;--line:#2b3455;--text:#e6ecff;--muted:#9aa9d1;--green:#22c55e;--red:#ef4444;--amber:#f59e0b}
-    *{box-sizing:border-box}
-    body{margin:0;background:radial-gradient(1200px 500px at 30% -10%, #1e2d58 0%, var(--bg) 50%);color:var(--text);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif}
-    .wrap{max-width:1120px;margin:0 auto;padding:20px 14px 28px}
-    .header{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
-    .title{font-weight:700;font-size:24px}.meta{font-size:13px;color:var(--muted)}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px}
-    .card{border-radius:16px;padding:14px;border:1px solid var(--line);box-shadow:0 10px 20px rgba(0,0,0,.18)}
-    .card.long{background:linear-gradient(180deg,#472225 0%, #2c1518 100%)}
-    .card.short{background:linear-gradient(180deg,#1f3f2b 0%, #13281c 100%)}
-    .card.empty{background:linear-gradient(180deg,#1a2340 0%, var(--card) 100%)}
-    .card h3{margin:0 0 10px;font-size:17px;display:flex;align-items:center;gap:8px}
-    .badge{font-size:11px;padding:3px 8px;border-radius:999px;background:#00000036;border:1px solid #ffffff2f}
-    .kv{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #ffffff26;font-size:13px}
-    .kv:last-child{border-bottom:none}
-    .muted{color:#d5ddffb3}.good{color:var(--green);font-weight:600}.bad{color:var(--red);font-weight:600}.warn{color:var(--amber);font-weight:600}
-    .btn{margin-top:10px;font-size:12px;padding:5px 9px;border-radius:8px;background:#00000040;border:1px solid #ffffff2a;color:#fff;cursor:pointer}
-    .sub{margin-top:10px;padding:8px;border:1px dashed #ffffff36;border-radius:10px;background:#0000002f}
-    .sub + .sub{margin-top:8px}
-    .err{margin-top:8px;color:#ffb8b8;font-size:12px}
-    @media (max-width: 640px){.wrap{padding:12px 10px 22px}.title{font-size:20px}}
+    :root{
+      --bg:#0b1020;--panel:#151c32;--line:#2b3455;--text:#e6ecff;--muted:#9aa9d1;
+      --long:#1f3f2b;--short:#472225;--empty:#1a2340;--accent:#60a5fa;
+    }
+    body.light{
+      --bg:#f3f6fb;--panel:#ffffff;--line:#d5dfef;--text:#1f2a44;--muted:#5f6d8c;
+      --long:#e8f8ef;--short:#fdeced;--empty:#eef3fb;--accent:#2563eb;
+    }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif}
+    .wrap{max-width:1120px;margin:0 auto;padding:18px 12px 26px}
+    .head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .title{font-size:24px;font-weight:700}.meta{font-size:13px;color:var(--muted)}
+    .btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:10px;cursor:pointer}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
+    .card{border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 8px 20px rgba(0,0,0,.12)}
+    .long{background:var(--long)} .short{background:var(--short)} .empty{background:var(--empty)}
+    .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+    .name{font-size:17px;font-weight:700}.badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #ffffff33;background:#00000020}
+    .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0}
+    .big{padding:10px;border:1px dashed #ffffff33;border-radius:10px}
+    .big .k{font-size:12px;color:var(--muted)} .big .v{font-size:20px;font-weight:700;margin-top:3px}
+    .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .kv{padding:8px;border-bottom:1px dashed #ffffff24;display:flex;justify-content:space-between;font-size:13px}
+    .kv .k{color:var(--muted)}
+    .good{color:#22c55e;font-weight:600}.bad{color:#ef4444;font-weight:600}.warn{color:#f59e0b;font-weight:600}
+    .expand{margin-top:10px}
+    .sub{margin-top:8px;padding:8px;border:1px dashed #ffffff33;border-radius:10px;background:#0000001e}
+    .err{margin-top:6px;font-size:12px;color:#fca5a5}
+    @media (max-width:640px){.title{font-size:20px}.row2,.pair{grid-template-columns:1fr}}
   </style>
 </head>
-<body>
-{% raw %}
-  <div id="app" class="wrap">
-    <div class="header">
-      <div class="title">OKX 带单员实时监控</div>
-      <div class="meta">更新时间: {{ state.last_refresh_time || '--' }} ｜ 账户: {{ state.count }}</div>
+<body x-data="dashboard()" :class="theme">
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="title">OKX 带单员实时监控</div>
+        <div class="meta">更新时间: <span x-text="state.last_refresh_time || '--'"></span> ｜ 账户: <span x-text="state.count || 0"></span></div>
+      </div>
+      <button class="btn" @click="toggleTheme()" x-text="theme === 'light' ? '切换夜色' : '切换白天'"></button>
     </div>
 
     <div class="grid">
-      <div v-for="item in state.items" :key="item.uniqueName" class="card" :class="cardClass(item)">
-        <h3>
-          {{ item.name }}
-          <span class="badge" v-if="item.hasPosition">{{ item.position.symbol }} / {{ item.position.direction }}</span>
-          <span class="badge" v-else>空仓</span>
-        </h3>
-
-        <template v-if="item.hasPosition">
-          <div class="kv"><span class="muted">方向</span><span>{{ item.position.direction }}</span></div>
-          <div class="kv"><span class="muted">杠杆</span><span>{{ item.position.lever }}x</span></div>
-          <div class="kv"><span class="muted">开仓均价</span><span>{{ item.position.avgPx }}</span></div>
-          <div class="kv"><span class="muted">收益率</span><span :class="valueClass(item.position.uplRate)">{{ item.position.uplRate }}</span></div>
-          <div class="kv"><span class="muted">持仓量</span><span>{{ item.position.coinAmount }}</span></div>
-          <div class="kv"><span class="muted">保证金</span><span>{{ item.position.margin }}</span></div>
-          <div class="kv"><span class="muted">持仓价值</span><span>{{ item.position.notionalUsd }}</span></div>
-          <div class="kv"><span class="muted">收益</span><span :class="valueClass(item.position.upl)">{{ item.position.upl }}</span></div>
-          <div class="kv"><span class="muted">保证金率</span><span :class="item.position.danger ? 'warn' : 'good'">{{ item.position.mgnRate }}</span></div>
-          <div class="kv"><span class="muted">预估爆仓价</span><span>{{ item.position.liqPx }}</span></div>
-
-          <button class="btn" @click="toggle(item.uniqueName)">
-            {{ expanded[item.uniqueName] ? '收起全部持仓' : `展开全部持仓 (${item.positions.length})` }}
-          </button>
-
-          <div v-if="expanded[item.uniqueName]">
-            <div v-for="p in item.positions" :key="p.instId + p.margin" class="sub">
-              <div class="kv"><span class="muted">币种</span><span>{{ p.symbol }}</span></div>
-              <div class="kv"><span class="muted">方向</span><span>{{ p.direction }}</span></div>
-              <div class="kv"><span class="muted">保证金</span><span>{{ p.margin }}</span></div>
-              <div class="kv"><span class="muted">收益率</span><span :class="valueClass(p.uplRate)">{{ p.uplRate }}</span></div>
-            </div>
+      <template x-for="item in state.items" :key="item.uniqueName">
+        <div class="card" :class="cardClass(item)">
+          <div class="top">
+            <div class="name" x-text="item.name"></div>
+            <span class="badge" x-text="item.hasPosition ? `${item.position.symbol} / ${item.position.dirLev}` : '空仓'"></span>
           </div>
-        </template>
 
-        <template v-else>
-          <div class="muted">当前无持仓</div>
-        </template>
+          <template x-if="item.hasPosition">
+            <div>
+              <div class="row2">
+                <div class="big">
+                  <div class="k">开仓均价</div>
+                  <div class="v" x-text="item.position.avgPx"></div>
+                </div>
+                <div class="big">
+                  <div class="k">收益率</div>
+                  <div class="v" :class="valueClass(item.position.uplRate)" x-text="item.position.uplRate"></div>
+                </div>
+              </div>
 
-        <div v-if="item.error" class="err">{{ item.error }}</div>
-      </div>
+              <div class="pair">
+                <div class="kv"><span class="k">持仓量</span><span x-text="item.position.coinAmount"></span></div>
+                <div class="kv"><span class="k">保证金</span><span x-text="item.position.margin"></span></div>
+                <div class="kv"><span class="k">持仓价值</span><span x-text="item.position.notionalUsd"></span></div>
+                <div class="kv"><span class="k">收益</span><span :class="valueClass(item.position.upl)" x-text="item.position.upl"></span></div>
+                <div class="kv"><span class="k">保证金率</span><span :class="item.position.danger ? 'warn' : 'good'" x-text="item.position.mgnRate"></span></div>
+                <div class="kv"><span class="k">预估爆仓价</span><span x-text="item.position.liqPx"></span></div>
+              </div>
+
+              <div class="expand">
+                <button class="btn" @click="toggle(item.uniqueName)" x-text="expanded[item.uniqueName] ? '收起全部持仓' : `展开全部持仓 (${item.positions.length})`"></button>
+                <div x-show="expanded[item.uniqueName]">
+                  <template x-for="p in item.positions" :key="`${p.instId}-${p.margin}`">
+                    <div class="sub">
+                      <div class="kv"><span class="k">币种</span><span x-text="p.symbol"></span></div>
+                      <div class="kv"><span class="k">方向</span><span x-text="p.dirLev"></span></div>
+                      <div class="kv"><span class="k">保证金</span><span x-text="p.margin"></span></div>
+                      <div class="kv"><span class="k">收益率</span><span :class="valueClass(p.uplRate)" x-text="p.uplRate"></span></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="!item.hasPosition"><div class="meta">当前无持仓</div></template>
+          <div x-show="item.error" class="err" x-text="item.error"></div>
+        </div>
+      </template>
     </div>
   </div>
 
   <script>
-    const { createApp } = Vue;
-    createApp({
-      data(){
-        return { state:{last_refresh_time:'',count:0,items:[]}, expanded:{} };
-      },
-      methods:{
+    function dashboard(){
+      return {
+        state:{last_refresh_time:'',count:0,items:[]},
+        expanded:{},
+        theme: localStorage.getItem('okx_theme') || 'dark',
         valueClass(v){ return String(v).startsWith('-') ? 'bad' : 'good'; },
         cardClass(item){
           if(!item.hasPosition) return 'empty';
           return item.position.direction === '空' ? 'short' : 'long';
         },
         toggle(key){ this.expanded[key] = !this.expanded[key]; },
+        toggleTheme(){
+          this.theme = this.theme === 'light' ? 'dark' : 'light';
+          localStorage.setItem('okx_theme', this.theme);
+        },
         async load(){
           const res = await fetch('/api/status');
           this.state = await res.json();
-        }
-      },
-      mounted(){ this.load(); setInterval(this.load, 5000); }
-    }).mount('#app');
+        },
+        init(){ this.load(); setInterval(()=>this.load(), 5000); }
+      }
+    }
   </script>
-{% endraw %}
 </body>
 </html>

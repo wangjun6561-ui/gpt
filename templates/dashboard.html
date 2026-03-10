@@ -68,7 +68,7 @@
               <div class="row2">
                 <div class="big">
                   <div class="k">开仓均价</div>
-                  <div class="v" x-text="`${item.position.avgPx}u`"></div>
+                  <div class="v" x-text="`${item.position.avgPx}U`"></div>
                 </div>
                 <div class="big">
                   <div class="k">收益率</div>
@@ -78,11 +78,11 @@
 
               <div class="pair">
                 <div class="kv"><span class="k">持仓</span><span x-text="`${item.position.contracts}张`"></span></div>
-                <div class="kv"><span class="k">保证金</span><span x-text="`${item.position.margin}u`"></span></div>
-                <div class="kv"><span class="k">持仓值</span><span x-text="`${item.position.notionalUsd}u`"></span></div>
-                <div class="kv"><span class="k">收益</span><span :class="valueClass(item.position.upl)" x-text="`${item.position.upl}u`"></span></div>
-                <div class="kv"><span class="k">标记价</span><span x-text="item.position.markPx === '0' ? '--' : `${item.position.markPx}u`"></span></div>
-                <div class="kv"><span class="k">爆仓价</span><span x-text="item.position.liqPx === '--' ? '--' : `${item.position.liqPx}u`"></span></div>
+                <div class="kv"><span class="k">保证金</span><span x-text="`${item.position.margin}U`"></span></div>
+                <div class="kv"><span class="k">持仓值</span><span x-text="`${item.position.notionalUsd}U`"></span></div>
+                <div class="kv"><span class="k">收益</span><span :class="valueClass(item.position.upl)" x-text="`${item.position.upl}U`"></span></div>
+                <div class="kv"><span class="k">标记价</span><span x-text="item.position.markPx === '0' ? '--' : `${item.position.markPx}U`"></span></div>
+                <div class="kv"><span class="k">爆仓价</span><span x-text="item.position.liqPx === '--' ? '--' : `${item.position.liqPx}U`"></span></div>
                 <div class="kv"><span class="k">保证金率</span><span :class="item.position.danger ? 'warn' : 'good'" x-text="item.position.mgnRate"></span></div>
                 <div class="kv"><span class="k">币量</span><span x-text="item.position.coinAmount"></span></div>
               </div>
@@ -94,7 +94,7 @@
                     <div class="sub">
                       <div class="kv"><span class="k">币种</span><span x-text="p.symbol"></span></div>
                       <div class="kv"><span class="k">方向</span><span x-text="p.dirLev"></span></div>
-                      <div class="kv"><span class="k">保证金</span><span x-text="`${p.margin}u`"></span></div>
+                      <div class="kv"><span class="k">保证金</span><span x-text="`${p.margin}U`"></span></div>
                       <div class="kv"><span class="k">收益率</span><span :class="valueClass(p.uplRate)" x-text="p.uplRate"></span></div>
                     </div>
                   </template>
@@ -118,6 +118,8 @@
         theme: localStorage.getItem('okx_theme') || 'dark',
         selectedRankType: '',
         rankOptions: [
+          { label: '配置', value: '__config__' },
+          { label: '所有', value: '__all__' },
           { label: '综合排序', value: '' },
           { label: '收益率', value: 'yieldRatio' },
           { label: '收益额', value: 'pnl' },

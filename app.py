@@ -29,6 +29,7 @@ class OKXMonitor:
     POSITION_URL = "https://www.okx.com/priapi/v5/ecotrade/public/community/user/position-current"
     TRADES_URL = "https://www.okx.com/priapi/v5/ecotrade/public/community/user/trade-records"
     FOLLOW_RANK_URL = "https://www.okx.com/priapi/v5/ecotrade/public/follow-rank"
+    ALL_RANK_TYPES = ["", "yieldRatio", "pnl", "winRatio", "aum", "traderFollowerLimit", "followTotalPnl"]
 
     def __init__(self, config_path: str = "config.json"):
         self.config = self._load_config(config_path)
@@ -45,7 +46,7 @@ class OKXMonitor:
         })
         self.base_traders = self._load_traders()
         self.traders = list(self.base_traders)
-        self.current_rank_type = ""
+        self.current_rank_type = "__config__"
 
         data_dir = Path(self.config.get("data_dir", "data"))
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +70,10 @@ class OKXMonitor:
         return {
             "User-Agent": "Mozilla/5.0",
             "Accept": "application/json, text/plain, */*",
+            "accept-language": "zh-CN,zh;q=0.9",
+            "x-locale": "zh_CN",
+            "x-utc": "8",
+            "x-zkdex-env": "0",
             "Referer": "https://www.okx.com/",
             "Origin": "https://www.okx.com",
         }
@@ -266,6 +271,46 @@ class OKXMonitor:
 
         self.refresh_positions()
         return len(traders)
+
+    def switch_to_config_traders(self) -> int:
+        with self.refresh_lock:
+            self.traders = list(self.base_traders)
+            self._position_cursor = 0
+            self.current_rank_type = "__config__"
+            self.previous_trades = {t.unique_name: self.previous_trades.get(t.unique_name, []) for t in self.traders}
+
+        with self.state_lock:
+            self.latest_positions = {}
+
+        self.refresh_positions()
+        return len(self.traders)
+
+    def switch_to_all_rank_traders(self) -> int:
+        config_ids = {t.unique_name for t in self.base_traders}
+        merged: List[TraderConfig] = []
+        seen: Set[str] = set()
+
+        for rank_type in self.ALL_RANK_TYPES:
+            for trader in self.fetch_follow_rank_traders(rank_type):
+                if trader.unique_name in config_ids or trader.unique_name in seen:
+                    continue
+                seen.add(trader.unique_name)
+                merged.append(trader)
+
+        if not merged:
+            return 0
+
+        with self.refresh_lock:
+            self.traders = merged
+            self._position_cursor = 0
+            self.current_rank_type = "__all__"
+            self.previous_trades = {t.unique_name: self.previous_trades.get(t.unique_name, []) for t in self.traders}
+
+        with self.state_lock:
+            self.latest_positions = {}
+
+        self.refresh_positions()
+        return len(self.traders)
 
     @staticmethod
     def parse_okx_trade(trade: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -672,7 +717,12 @@ def create_flask_app(monitor: OKXMonitor) -> Flask:
     def api_rank_switch():
         body = request.get_json(silent=True) or {}
         rank_type = str(body.get("type", "")).strip()
-        total = monitor.switch_to_rank_traders(rank_type)
+        if rank_type == "__config__":
+            total = monitor.switch_to_config_traders()
+        elif rank_type == "__all__":
+            total = monitor.switch_to_all_rank_traders()
+        else:
+            total = monitor.switch_to_rank_traders(rank_type)
         if total <= 0:
             return jsonify({"ok": False, "message": "未获取到排行带单员，请稍后重试"}), 502
         return jsonify({"ok": True, "count": total, "rank_type": rank_type})

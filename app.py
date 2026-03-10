@@ -351,6 +351,8 @@ class OKXMonitor:
             "avgPx": self.format_number(pos.get("avgPx", 0), 8),
             "uplRate": f"{upl_ratio * 100:.2f}%",
             "coinAmount": self.format_number(coin_amount, 6),
+            "contracts": self.format_number(abs(pos_size), 4),
+            "markPx": self.format_number(pos.get("markPx", 0), 8),
             "margin": self.format_number(margin_value, 4),
             "marginValue": margin_value,
             "notionalUsd": self.format_number(pos.get("notionalUsd", 0), 4),

@@ -30,6 +30,7 @@
   </style>
 </head>
 <body>
+{% raw %}
   <div id="app" class="wrap">
     <div class="header">
       <div class="title">OKX 带单员实时监控</div>
@@ -100,5 +101,6 @@
       mounted(){ this.load(); setInterval(this.load, 5000); }
     }).mount('#app');
   </script>
+{% endraw %}
 </body>
 </html>

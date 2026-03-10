@@ -9,12 +9,12 @@ from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template
 
 
 @dataclass
@@ -40,15 +40,14 @@ class OKXMonitor:
             "BTC-USDT-SWAP": 0.01,
             "SOL-USDT-SWAP": 1,
         })
-
         self.traders = self._load_traders()
+
         data_dir = Path(self.config.get("data_dir", "data"))
         data_dir.mkdir(parents=True, exist_ok=True)
-
         self.trades_history_file = str(data_dir / "trades_history.json")
+
         self.previous_trades: Dict[str, List[str]] = {}
         self.latest_positions: Dict[str, Dict[str, Any]] = {}
-
         self._load_trades_history()
 
     @property
@@ -86,10 +85,8 @@ class OKXMonitor:
             if not os.path.exists(self.trades_history_file):
                 print("ℹ️  未找到交易历史数据文件，将创建新文件")
                 return
-
             with open(self.trades_history_file, "r", encoding="utf-8") as f:
                 history_data = json.load(f)
-
             loaded = history_data.get("trades", {})
             normalized: Dict[str, List[str]] = {}
             for account, records in loaded.items():
@@ -97,13 +94,9 @@ class OKXMonitor:
                     continue
                 normalized[account] = [str(r) if not isinstance(r, dict) else self._trade_id(r) for r in records]
             self.previous_trades = normalized
-
             if self.previous_trades:
                 print(f"✓ 已加载交易历史数据 (上次更新: {history_data.get('last_update', '')})")
                 print(f"  包含 {len(self.previous_trades)} 个账户的历史记录")
-        except json.JSONDecodeError as e:
-            print(f"⚠️  交易历史数据文件格式错误: {e}，将重新开始")
-            self.previous_trades = {}
         except Exception as e:
             print(f"⚠️  加载交易历史数据失败: {e}，将重新开始")
             self.previous_trades = {}
@@ -113,7 +106,7 @@ class OKXMonitor:
             history_data = {
                 "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "trades": self.previous_trades,
-                "version": "3.1",
+                "version": "3.2",
             }
             with open(self.trades_history_file, "w", encoding="utf-8") as f:
                 json.dump(history_data, f, ensure_ascii=False, indent=2)
@@ -127,10 +120,8 @@ class OKXMonitor:
             value = float(num)
         except (TypeError, ValueError):
             return "0"
-
         if value == 0:
             return "0"
-
         abs_value = abs(value)
         if abs_value >= 1000:
             decimals = 2
@@ -138,7 +129,6 @@ class OKXMonitor:
             decimals = min(max_decimals, 4)
         else:
             decimals = min(max_decimals + 2, 8)
-
         text = f"{value:.{decimals}f}"
         return text.rstrip("0").rstrip(".") if "." in text else text
 
@@ -175,8 +165,7 @@ class OKXMonitor:
 
     def fetch_okx_trades(self, unique_name: str, limit: int = 8) -> Optional[Dict[str, Any]]:
         try:
-            url = f"{self.TRADES_URL}?uniqueName={unique_name}&limit={limit}"
-            return self._http_get_json(url)
+            return self._http_get_json(f"{self.TRADES_URL}?uniqueName={unique_name}&limit={limit}")
         except Exception as e:
             print(f"❌ 获取交易记录失败 {unique_name}: {e}")
             return None
@@ -185,7 +174,6 @@ class OKXMonitor:
     def parse_okx_trade(trade: Dict[str, Any]) -> Tuple[str, str, str]:
         side = str(trade.get("side", "")).lower()
         pos_side = str(trade.get("posSide", "")).lower()
-
         if pos_side == "net":
             if side == "buy":
                 return "买入", "🟢", "单向持仓-买入"
@@ -204,23 +192,41 @@ class OKXMonitor:
                 return str(trade.get(key))
         return json.dumps(trade, sort_keys=True, ensure_ascii=False)
 
+    def _infer_direction(self, pos: Dict[str, Any]) -> str:
+        pos_side = str(pos.get("posSide", "")).lower()
+        if pos_side == "short":
+            return "空"
+        if pos_side == "long":
+            return "多"
+        # net/空字符串兜底：根据持仓数量正负推断
+        try:
+            pos_num = float(pos.get("pos", 0) or 0)
+            if pos_num < 0:
+                return "空"
+        except (TypeError, ValueError):
+            pass
+        return "多"
+
     def _position_to_view(self, pos: Dict[str, Any]) -> Dict[str, Any]:
         inst_id = str(pos.get("instId", ""))
         contract_value = float(self.contract_values.get(inst_id, 1))
         pos_size = float(pos.get("pos", 0) or 0)
-        coin_amount = pos_size * contract_value
-
+        coin_amount = abs(pos_size) * contract_value
         upl_ratio = float(pos.get("uplRatio", 0) or 0)
         mgn_ratio = float(pos.get("mgnRatio", 0) or 0)
+        margin_value = float(pos.get("margin", 0) or 0)
+        direction = self._infer_direction(pos)
 
         return {
+            "instId": inst_id,
             "symbol": inst_id.replace("-SWAP", "").replace("-", "/").lower(),
-            "direction": "空" if pos.get("posSide") == "short" else "多",
+            "direction": direction,
             "lever": pos.get("lever", "0"),
             "avgPx": self.format_number(pos.get("avgPx", 0), 8),
             "uplRate": f"{upl_ratio * 100:.2f}%",
             "coinAmount": self.format_number(coin_amount, 6),
-            "margin": self.format_number(pos.get("margin", 0), 4),
+            "margin": self.format_number(margin_value, 4),
+            "marginValue": margin_value,
             "notionalUsd": self.format_number(pos.get("notionalUsd", 0), 4),
             "upl": self.format_number(pos.get("upl", 0), 4),
             "liqPx": self.format_number(pos.get("liqPx") or 0, 8) if pos.get("liqPx") else "--",
@@ -229,19 +235,26 @@ class OKXMonitor:
         }
 
     @staticmethod
-    def _pick_primary_position(pos_data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if not pos_data:
+    def _pick_primary_position(all_positions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not all_positions:
             return None
         priority = ["ETH-USDT-SWAP", "BTC-USDT-SWAP", "SOL-USDT-SWAP"]
-        index = {p.get("instId"): p for p in pos_data}
+        by_inst = {p.get("instId"): p for p in all_positions}
         for inst in priority:
-            if inst in index:
-                return index[inst]
-        return pos_data[0]
+            if inst in by_inst:
+                return by_inst[inst]
+        return all_positions[0]
 
-    def refresh_positions(self):
-        snapshot: Dict[str, Dict[str, Any]] = {}
+    def refresh_positions(self, unique_names: Optional[Set[str]] = None):
+        target = {t.unique_name for t in self.traders} if unique_names is None else set(unique_names)
+
+        with self.state_lock:
+            snapshot = dict(self.latest_positions)
+
         for trader in self.traders:
+            if trader.unique_name not in target:
+                continue
+
             pos_data = self.fetch_okx_positions(trader.unique_name)
             if pos_data is None:
                 snapshot[trader.unique_name] = {
@@ -250,23 +263,38 @@ class OKXMonitor:
                     "uniqueName": trader.unique_name,
                     "hasPosition": False,
                     "position": None,
+                    "positions": [],
                     "rawCount": 0,
                     "error": "拉取失败",
                 }
                 continue
 
-            primary = self._pick_primary_position(pos_data)
+            all_views = [self._position_to_view(p) for p in pos_data]
+            # 第三点需求：根据保证金金额排序（大 -> 小）
+            all_views.sort(key=lambda x: x.get("marginValue", 0), reverse=True)
+            primary = self._pick_primary_position(all_views)
+
             snapshot[trader.unique_name] = {
                 "name": trader.name,
                 "platform": trader.platform,
                 "uniqueName": trader.unique_name,
                 "hasPosition": bool(primary),
-                "position": self._position_to_view(primary) if primary else None,
-                "rawCount": len(pos_data),
+                "position": primary,
+                "positions": all_views,
+                "rawCount": len(all_views),
                 "error": "",
             }
 
-        sorted_items = sorted(snapshot.items(), key=lambda x: (0 if x[1]["hasPosition"] else 1, x[1]["name"]))
+        # 博主级排序：有持仓在前，空仓在后；有持仓时按主仓保证金降序
+        sorted_items = sorted(
+            snapshot.items(),
+            key=lambda x: (
+                0 if x[1].get("hasPosition") else 1,
+                -float(x[1].get("position", {}).get("marginValue", 0) if x[1].get("position") else 0),
+                x[1].get("name", ""),
+            ),
+        )
+
         with self.state_lock:
             self.latest_positions = dict(sorted_items)
             self.last_refresh_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -308,26 +336,21 @@ class OKXMonitor:
         first = notifications[0]
         trader_name = first["trader_name"]
         unique_name = first.get("unique_name", "")
-
-        summary = []
+        lines = []
         for item in notifications:
-            summary.append(
+            lines.append(
                 f"{item.get('emoji', '📊')} **{item['action_text']}** `{self.format_number(item['size'], 4)} {item['coin_symbol']}` "
                 f"@ `{self.format_number(item.get('avg_price', 0), 5)} USDT` - {item.get('time_short', '')}"
             )
-
-        title = f"📊 {trader_name} 批量交易提醒 ({len(notifications)}笔)"
-        content = (
-            f"## 📊 {trader_name} - 批量交易提醒\n\n"
-            f"### 检测到 {len(notifications)} 笔新交易\n\n"
-            + "\n".join(summary)
-            + f"\n\n> 🔗 博主ID: `{unique_name}`\n> ⏰ 通知时间: {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}"
-        )
-
         return {
             "platform": "okx",
-            "title": title,
-            "content": content,
+            "title": f"📊 {trader_name} 批量交易提醒 ({len(notifications)}笔)",
+            "content": (
+                f"## 📊 {trader_name} - 批量交易提醒\n\n"
+                f"### 检测到 {len(notifications)} 笔新交易\n\n"
+                + "\n".join(lines)
+                + f"\n\n> 🔗 博主ID: `{unique_name}`\n> ⏰ 通知时间: {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}"
+            ),
             "trader_name": trader_name,
             "unique_name": unique_name,
             "is_merged": True,
@@ -338,14 +361,14 @@ class OKXMonitor:
         conf = self.config.get("notification", {}).get("serverchan", {})
         if not conf.get("enabled", False):
             return False
-
         sendkey = conf.get("sendkey", "")
         if not sendkey or sendkey == "YOUR_SERVERCHAN_SENDKEY_HERE":
             return False
-
-        payload = {"title": title, "desp": content, "channel": conf.get("channel", "1")}
         try:
-            self._http_post_json(f"https://sctapi.ftqq.com/{sendkey}.send", payload)
+            self._http_post_json(
+                f"https://sctapi.ftqq.com/{sendkey}.send",
+                {"title": title, "desp": content, "channel": conf.get("channel", "1")},
+            )
             print("✓ Server酱通知发送成功")
             return True
         except Exception as e:
@@ -356,25 +379,21 @@ class OKXMonitor:
         email_conf = self.config.get("notification", {}).get("email", {})
         if not email_conf.get("enabled", False):
             return False
-
         sender = email_conf.get("sender_email", "")
         password = email_conf.get("sender_password", "")
         receiver = email_conf.get("receiver_email", "")
-        server_host = email_conf.get("smtp_server", "")
-        server_port = int(email_conf.get("smtp_port", 465))
+        smtp_server = email_conf.get("smtp_server", "")
+        smtp_port = int(email_conf.get("smtp_port", 465))
         use_ssl = bool(email_conf.get("use_ssl", True))
-
-        if not all([sender, password, receiver, server_host]):
+        if not all([sender, password, receiver, smtp_server]):
             return False
-
         try:
             msg = MIMEMultipart()
             msg["From"] = Header(sender)
             msg["To"] = Header(receiver)
             msg["Subject"] = Header(subject, "utf-8")
-            msg.attach(MIMEText(self._convert_markdown_to_html(content, platform), "html", "utf-8"))
-
-            smtp = smtplib.SMTP_SSL(server_host, server_port) if use_ssl else smtplib.SMTP(server_host, server_port)
+            msg.attach(MIMEText(content.replace("\n", "<br>"), "html", "utf-8"))
+            smtp = smtplib.SMTP_SSL(smtp_server, smtp_port) if use_ssl else smtplib.SMTP(smtp_server, smtp_port)
             if not use_ssl:
                 smtp.starttls()
             smtp.login(sender, password)
@@ -386,41 +405,12 @@ class OKXMonitor:
             print(f"❌ 发送邮件失败: {e}")
             return False
 
-    @staticmethod
-    def _convert_markdown_to_html(content: str, platform: str = "okx") -> str:
-        import html
-
-        lines = html.escape(content).split("\n")
-        blocks = []
-        for line in lines:
-            if line.startswith("## "):
-                blocks.append(f'<h2 style="margin:14px 0 8px;">{line[3:]}</h2>')
-            elif line.startswith("### "):
-                blocks.append(f'<h3 style="margin:10px 0 8px;">{line[4:]}</h3>')
-            elif line.startswith("> "):
-                blocks.append(f'<blockquote style="border-left:4px solid #3b82f6;padding-left:10px;color:#6b7280;">{line[2:]}</blockquote>')
-            elif line.startswith("- "):
-                blocks.append(f"• {line[2:]}<br>")
-            elif line.strip() == "":
-                blocks.append("<br>")
-            else:
-                blocks.append(line + "<br>")
-
-        gradient = "linear-gradient(135deg,#667eea 0%,#764ba2 100%)" if platform == "okx" else "linear-gradient(135deg,#f0b90b 0%,#f8d33a 100%)"
-        title = "OKX交易提醒" if platform == "okx" else "交易提醒"
-
-        return (
-            "<html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'></head>"
-            "<body style='font-family:Arial,sans-serif;max-width:760px;margin:0 auto;padding:20px;background:#fff;color:#1f2937;'>"
-            f"<div style='background:{gradient};padding:16px;border-radius:10px 10px 0 0;color:#fff;'><h1 style='margin:0;font-size:22px'>{title}</h1></div>"
-            "<div style='background:#f9fafb;border:1px solid #e5e7eb;border-top:none;padding:18px;border-radius:0 0 10px 10px;'>"
-            + "\n".join(blocks)
-            + "</div><div style='text-align:center;color:#9ca3af;font-size:12px;margin-top:12px;'>此邮件由监控系统自动发送</div></body></html>"
-        )
-
+    # 第四点需求：定时仅拉交易，不每轮拉持仓；仅有变化才刷新持仓
     def check_trades_once(self):
         all_notifications: List[Dict[str, Any]] = []
+        changed_traders: Set[str] = set()
         limit = int(self.config.get("okx", {}).get("trades_limit", 8))
+
         for trader in self.traders:
             result = self.fetch_okx_trades(trader.unique_name, limit=limit)
             if not result or result.get("code") != "0":
@@ -435,6 +425,7 @@ class OKXMonitor:
             new_trades = [trade for trade, tid in zip(trades, current_ids) if tid not in previous_ids]
 
             if new_trades:
+                changed_traders.add(trader.unique_name)
                 self._log_debug(f"{trader.name} 新交易 {len(new_trades)} 笔")
                 for trade in reversed(new_trades):
                     all_notifications.append(self._create_notification(trader, trade))
@@ -459,8 +450,8 @@ class OKXMonitor:
                 self.send_email(notif["title"], notif["content"], notif["platform"])
                 time.sleep(0.5)
 
-            # 有新交易后立即刷新页面状态
-            self.refresh_positions()
+            # 只有变动的博主才刷新持仓
+            self.refresh_positions(changed_traders)
         else:
             self._log_debug("本轮无新交易")
 
@@ -482,120 +473,26 @@ class OKXMonitor:
         interval = int(self.config.get("interval_seconds", 20))
         while self.running:
             try:
-                self.refresh_positions()
                 self.check_trades_once()
             except Exception as e:
                 print(f"❌ 监控循环异常: {e}")
             time.sleep(interval)
 
-    def stop(self):
-        self.running = False
-
-
-DASHBOARD_TEMPLATE = """
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>OKX 带单监控</title>
-  <style>
-    :root{--bg:#0b1020;--card:#151c32;--text:#e6ecff;--muted:#9aa9d1;--line:#2b3455;--green:#4ade80;--red:#f87171;--amber:#fbbf24;--primary:#60a5fa}
-    *{box-sizing:border-box}
-    body{margin:0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;background:radial-gradient(1200px 500px at 30% -10%, #1e2d58 0%, var(--bg) 50%);color:var(--text)}
-    .wrap{max-width:1100px;margin:0 auto;padding:24px 16px 32px}
-    .header{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
-    .title{font-size:24px;font-weight:700;letter-spacing:.2px}
-    .meta{font-size:13px;color:var(--muted)}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
-    .card{background:linear-gradient(180deg,#1a2340 0%, var(--card) 100%);border:1px solid var(--line);border-radius:16px;padding:14px 14px 10px;box-shadow:0 10px 22px rgba(0,0,0,.2)}
-    .card h3{margin:0 0 10px;font-size:17px;display:flex;align-items:center;gap:8px}
-    .badge{font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid #3f4a73;background:#212a47;color:#bbcaf3}
-    .kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px dashed rgba(154,169,209,.18);font-size:13px}
-    .kv:last-child{border-bottom:none}
-    .muted{color:var(--muted)}
-    .good{color:var(--green);font-weight:600}
-    .bad{color:var(--red);font-weight:600}
-    .warn{color:var(--amber);font-weight:600}
-    .err{margin-top:8px;color:#ffb4b4;font-size:12px}
-    .empty{padding:20px 10px;color:var(--muted);text-align:center;border:1px dashed #3a4571;border-radius:12px}
-    @media(max-width:640px){.wrap{padding:14px 10px 24px}.title{font-size:20px}.card{padding:12px}.kv{font-size:12px}}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="header">
-      <div class="title">OKX 带单员实时监控</div>
-      <div class="meta" id="meta">加载中...</div>
-    </div>
-    <div class="grid" id="cards"></div>
-  </div>
-
-<script>
-function valClass(v){
-  if(typeof v !== 'string') return '';
-  if(v.startsWith('-')) return 'bad';
-  return 'good';
-}
-async function render(){
-  const res = await fetch('/api/status');
-  const data = await res.json();
-  const cards = document.getElementById('cards');
-  cards.innerHTML = '';
-  document.getElementById('meta').textContent = `更新时间: ${data.last_refresh_time || '--'} ｜ 账户: ${data.count}`;
-
-  if(!data.items.length){
-    cards.innerHTML = "<div class='empty'>暂无数据</div>";
-    return;
-  }
-
-  data.items.forEach(it=>{
-    const c = document.createElement('div');
-    c.className='card';
-    if(!it.hasPosition){
-      c.innerHTML = `<h3>${it.name}<span class='badge'>空仓</span></h3><div class='muted'>当前无持仓</div>${it.error?`<div class='err'>${it.error}</div>`:''}`;
-    }else{
-      const p = it.position;
-      c.innerHTML = `
-        <h3>${it.name}<span class='badge'>${p.symbol}</span></h3>
-        <div class='kv'><span class='muted'>方向</span><span>${p.direction}</span></div>
-        <div class='kv'><span class='muted'>杠杆</span><span>${p.lever}x</span></div>
-        <div class='kv'><span class='muted'>开仓均价</span><span>${p.avgPx}</span></div>
-        <div class='kv'><span class='muted'>收益率</span><span class='${valClass(p.uplRate)}'>${p.uplRate}</span></div>
-        <div class='kv'><span class='muted'>持仓量</span><span>${p.coinAmount}</span></div>
-        <div class='kv'><span class='muted'>保证金</span><span>${p.margin}</span></div>
-        <div class='kv'><span class='muted'>持仓价值</span><span>${p.notionalUsd}</span></div>
-        <div class='kv'><span class='muted'>收益</span><span class='${valClass(p.upl)}'>${p.upl}</span></div>
-        <div class='kv'><span class='muted'>保证金率</span><span class='${p.danger ? "warn" : "good"}'>${p.mgnRate}</span></div>
-        <div class='kv'><span class='muted'>预估爆仓价</span><span>${p.liqPx}</span></div>
-        ${it.error?`<div class='err'>${it.error}</div>`:''}`;
-    }
-    cards.appendChild(c);
-  });
-}
-render();
-setInterval(render, 5000);
-</script>
-</body>
-</html>
-"""
-
 
 def create_flask_app(monitor: OKXMonitor) -> Flask:
-    app = Flask(__name__)
+    app = Flask(__name__, template_folder="templates")
 
     @app.get("/")
     def index():
-        return render_template_string(DASHBOARD_TEMPLATE)
+        return render_template("dashboard.html")
 
     @app.get("/api/status")
     def api_status():
         with monitor.state_lock:
-            items = list(monitor.latest_positions.values())
             payload = {
                 "last_refresh_time": monitor.last_refresh_time,
-                "count": len(items),
-                "items": items,
+                "count": len(monitor.latest_positions),
+                "items": list(monitor.latest_positions.values()),
             }
         return jsonify(payload)
 
@@ -604,12 +501,14 @@ def create_flask_app(monitor: OKXMonitor) -> Flask:
 
 def main():
     monitor = OKXMonitor("config.json")
+
+    # 启动阶段拉一次全量持仓
     monitor.refresh_positions()
+
     if not monitor.previous_trades:
         monitor.bootstrap_history()
 
-    monitor_thread = threading.Thread(target=monitor.monitor_loop, daemon=True)
-    monitor_thread.start()
+    threading.Thread(target=monitor.monitor_loop, daemon=True).start()
 
     web_conf = monitor.config.get("web", {})
     host = web_conf.get("host", "0.0.0.0")

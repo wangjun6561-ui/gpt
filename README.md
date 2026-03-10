@@ -46,21 +46,28 @@ python app.py
    - 持仓实时循环：按 `okx.position_batch_interval_seconds` 分批刷新持仓；
    - 默认每 10s 刷新 3 个账户（轮询更新列表）。
 
-7. **独立 HTML 模板**
+7. **右上角排行筛选下拉**
+   - 支持：综合排序、收益率、收益额、胜率、带单规模、当前跟单人数、跟单用户收益；
+   - 选择后会清空当前页面列表并拉取 follow-rank 临时带单员列表；
+   - 仅替换内存中的展示列表，不改 `config` 和本地数据文件。
+
+8. **独立 HTML 模板**
    - 页面单独放在 `templates/dashboard.html`，后续前端调整更方便；
    - 使用 Alpine.js CDN 做轻量交互（无需本地打包）；
    - 点击博主姓名可直达 OKX 主页。
 
-8. **白天/夜色主题切换**
+9. **白天/夜色主题切换**
    - 页面右上角按钮可切换主题；
    - 自动记住上次选择。
 
-9. **预估爆仓价兜底计算**
+10. **预估爆仓价兜底计算**
    - 若 OKX `liqPx` 缺失，则按保证金率和杠杆做近似估算；
    - 保证金率低于 100% 视为爆仓风险。
 
 ## 4. 配置
 - `config.example.json` 中配置 `traders`、`okx.contract_values`、通知参数等。
+- `okx.follow_rank_size`: 拉取 follow-rank 每页数量（默认 9）。
+- `okx.follow_rank_pages`: 拉取 follow-rank 页数（默认 1）。
 - `okx.position_batch_size`: 每批刷新账户数（默认 3）。
 - `okx.position_batch_interval_seconds`: 批次刷新间隔秒数（默认 10）。
 - `debug: true` 可输出关键调试日志。

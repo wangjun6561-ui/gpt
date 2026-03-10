@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 
 @dataclass
@@ -28,6 +28,7 @@ class TraderConfig:
 class OKXMonitor:
     POSITION_URL = "https://www.okx.com/priapi/v5/ecotrade/public/community/user/position-current"
     TRADES_URL = "https://www.okx.com/priapi/v5/ecotrade/public/community/user/trade-records"
+    FOLLOW_RANK_URL = "https://www.okx.com/priapi/v5/ecotrade/public/follow-rank"
 
     def __init__(self, config_path: str = "config.json"):
         self.config = self._load_config(config_path)
@@ -42,7 +43,9 @@ class OKXMonitor:
             "BTC-USDT-SWAP": 0.01,
             "SOL-USDT-SWAP": 1,
         })
-        self.traders = self._load_traders()
+        self.base_traders = self._load_traders()
+        self.traders = list(self.base_traders)
+        self.current_rank_type = ""
 
         data_dir = Path(self.config.get("data_dir", "data"))
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -52,6 +55,14 @@ class OKXMonitor:
         self.latest_positions: Dict[str, Dict[str, Any]] = {}
         self._position_cursor = 0
         self._load_trades_history()
+
+    @staticmethod
+    def _trader_url(unique_name: str) -> str:
+        return f"https://www.okx.com/zh-hans/copy-trading/account/{unique_name}?tab=trade"
+
+    def _get_traders_snapshot(self) -> List[TraderConfig]:
+        with self.refresh_lock:
+            return list(self.traders)
 
     @property
     def http_headers(self) -> Dict[str, str]:
@@ -193,6 +204,69 @@ class OKXMonitor:
 
         return self._request_with_retry(_req, f"获取交易记录 {unique_name}")
 
+    def fetch_follow_rank_traders(self, rank_type: str = "") -> List[TraderConfig]:
+        okx_conf = self.config.get("okx", {})
+        page_size = int(okx_conf.get("follow_rank_size", 9))
+        pages = max(1, int(okx_conf.get("follow_rank_pages", 1)))
+
+        all_traders: List[TraderConfig] = []
+        seen: Set[str] = set()
+
+        for page in range(1, pages + 1):
+            def _req():
+                params = {
+                    "size": str(page_size),
+                    "type": rank_type,
+                    "start": str(page),
+                    "latestNum": str(okx_conf.get("follow_rank_latest_num", 90)),
+                    "fullState": str(okx_conf.get("follow_rank_full_state", 0)),
+                    "apiTrader": str(okx_conf.get("follow_rank_api_trader", 0)),
+                    "instNumLimit": str(okx_conf.get("follow_rank_inst_num_limit", 4)),
+                    "dataVersion": datetime.now().strftime("%Y%m%d%H%M%S"),
+                    "t": str(int(time.time() * 1000)),
+                }
+                payload = self._http_get_json(self.FOLLOW_RANK_URL, params=params)
+                if payload.get("code") != "0":
+                    raise RuntimeError(f"OKX code={payload.get('code')}")
+                return payload
+
+            payload = self._request_with_retry(_req, f"获取带单排行 第{page}页")
+            if not payload:
+                continue
+
+            rows = payload.get("data", []) or []
+            ranks = rows[0].get("ranks", []) if rows and isinstance(rows[0], dict) else []
+            for row in ranks:
+                unique_name = str(row.get("uniqueName", "")).strip()
+                if not unique_name or unique_name in seen:
+                    continue
+                seen.add(unique_name)
+                all_traders.append(TraderConfig(
+                    name=str(row.get("nickName", unique_name)),
+                    platform="okx",
+                    unique_name=unique_name,
+                ))
+
+        return all_traders
+
+    def switch_to_rank_traders(self, rank_type: str = "") -> int:
+        traders = self.fetch_follow_rank_traders(rank_type)
+        if not traders:
+            return 0
+
+        with self.refresh_lock:
+            self.traders = list(traders)
+            self._position_cursor = 0
+            self.current_rank_type = rank_type
+            # 切换为临时列表时只清空内存快照，不修改历史文件
+            self.previous_trades = {t.unique_name: self.previous_trades.get(t.unique_name, []) for t in self.traders}
+
+        with self.state_lock:
+            self.latest_positions = {}
+
+        self.refresh_positions()
+        return len(traders)
+
     @staticmethod
     def parse_okx_trade(trade: Dict[str, Any]) -> Tuple[str, str, str]:
         side = str(trade.get("side", "")).lower()
@@ -298,46 +372,47 @@ class OKXMonitor:
         return all_positions[0]
 
     def refresh_positions(self, unique_names: Optional[Set[str]] = None):
-        target = {t.unique_name for t in self.traders} if unique_names is None else set(unique_names)
+        traders = self._get_traders_snapshot()
+        target = {t.unique_name for t in traders} if unique_names is None else set(unique_names)
 
         with self.refresh_lock:
             with self.state_lock:
                 snapshot = dict(self.latest_positions)
 
-            for trader in self.traders:
+            for trader in traders:
                 if trader.unique_name not in target:
                     continue
 
                 pos_data = self.fetch_okx_positions(trader.unique_name)
                 if pos_data is None:
                     snapshot[trader.unique_name] = {
-                    "name": trader.name,
-                    "platform": trader.platform,
-                    "uniqueName": trader.unique_name,
-                    "hasPosition": False,
-                    "position": None,
-                    "positions": [],
-                    "rawCount": 0,
-                    "error": "拉取失败",
-                        "traderUrl": f"https://www.okx.com/zh-hans/copy-trading/account/{trader.unique_name}?tab=trade",
+                        "name": trader.name,
+                        "platform": trader.platform,
+                        "uniqueName": trader.unique_name,
+                        "hasPosition": False,
+                        "position": None,
+                        "positions": [],
+                        "rawCount": 0,
+                        "error": "拉取失败",
+                        "traderUrl": self._trader_url(trader.unique_name),
                     }
                     continue
 
                 all_views = [self._position_to_view(p) for p in pos_data]
-            # 第三点需求：根据保证金金额排序（大 -> 小）
+                # 第三点需求：根据保证金金额排序（大 -> 小）
                 all_views.sort(key=lambda x: x.get("marginValue", 0), reverse=True)
                 primary = self._pick_primary_position(all_views)
 
                 snapshot[trader.unique_name] = {
-                "name": trader.name,
-                "platform": trader.platform,
-                "uniqueName": trader.unique_name,
-                "hasPosition": bool(primary),
-                "position": primary,
-                "positions": all_views,
-                "rawCount": len(all_views),
-                "error": "",
-                    "traderUrl": f"https://www.okx.com/zh-hans/copy-trading/account/{trader.unique_name}?tab=trade",
+                    "name": trader.name,
+                    "platform": trader.platform,
+                    "uniqueName": trader.unique_name,
+                    "hasPosition": bool(primary),
+                    "position": primary,
+                    "positions": all_views,
+                    "rawCount": len(all_views),
+                    "error": "",
+                    "traderUrl": self._trader_url(trader.unique_name),
                 }
 
         # 博主级排序：有持仓在前，空仓在后；有持仓时按主仓保证金降序
@@ -359,14 +434,15 @@ class OKXMonitor:
         batch_size = int(self.config.get("okx", {}).get("position_batch_size", 3))
         if batch_size <= 0:
             return
-        total = len(self.traders)
+        traders = self._get_traders_snapshot()
+        total = len(traders)
         if total == 0:
             return
 
         start = self._position_cursor % total
         selected = []
         for i in range(min(batch_size, total)):
-            trader = self.traders[(start + i) % total]
+            trader = traders[(start + i) % total]
             selected.append(trader.unique_name)
         self._position_cursor = (start + batch_size) % total
 
@@ -484,8 +560,9 @@ class OKXMonitor:
         all_notifications: List[Dict[str, Any]] = []
         changed_traders: Set[str] = set()
         limit = int(self.config.get("okx", {}).get("trades_limit", 8))
+        traders = self._get_traders_snapshot()
 
-        for trader in self.traders:
+        for trader in traders:
             result = self.fetch_okx_trades(trader.unique_name, limit=limit)
             if not result or result.get("code") != "0":
                 continue
@@ -533,7 +610,7 @@ class OKXMonitor:
 
     def bootstrap_history(self):
         limit = int(self.config.get("okx", {}).get("trades_limit", 8))
-        for trader in self.traders:
+        for trader in self._get_traders_snapshot():
             result = self.fetch_okx_trades(trader.unique_name, limit=limit)
             if result and result.get("code") == "0":
                 trades = result.get("data", []) or []
@@ -576,8 +653,18 @@ def create_flask_app(monitor: OKXMonitor) -> Flask:
                 "last_refresh_time": monitor.last_refresh_time,
                 "count": len(monitor.latest_positions),
                 "items": list(monitor.latest_positions.values()),
+                "rank_type": monitor.current_rank_type,
             }
         return jsonify(payload)
+
+    @app.post("/api/rank/switch")
+    def api_rank_switch():
+        body = request.get_json(silent=True) or {}
+        rank_type = str(body.get("type", "")).strip()
+        total = monitor.switch_to_rank_traders(rank_type)
+        if total <= 0:
+            return jsonify({"ok": False, "message": "未获取到排行带单员，请稍后重试"}), 502
+        return jsonify({"ok": True, "count": total, "rank_type": rank_type})
 
     return app
 

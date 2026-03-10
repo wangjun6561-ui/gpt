@@ -8,6 +8,8 @@
   },
   "okx": {
     "trades_limit": 8,
+    "follow_rank_size": 9,
+    "follow_rank_pages": 1,
     "contract_values": {
       "ETH-USDT-SWAP": 0.1,
       "BTC-USDT-SWAP": 0.01,

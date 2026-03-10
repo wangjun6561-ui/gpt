@@ -23,7 +23,7 @@
     .card{border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 8px 20px rgba(0,0,0,.12)}
     .long{background:var(--long)} .short{background:var(--short)} .empty{background:var(--empty)}
     .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-    .name{font-size:17px;font-weight:700}.badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #ffffff33;background:#00000020}
+    .name{font-size:17px;font-weight:700;color:var(--text);text-decoration:none}.name:hover{text-decoration:underline;color:var(--accent)}.badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #ffffff33;background:#00000020}
     .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0}
     .big{padding:10px;border:1px dashed #ffffff33;border-radius:10px}
     .big .k{font-size:12px;color:var(--muted)} .big .v{font-size:20px;font-weight:700;margin-top:3px}
@@ -51,7 +51,7 @@
       <template x-for="item in state.items" :key="item.uniqueName">
         <div class="card" :class="cardClass(item)">
           <div class="top">
-            <div class="name" x-text="item.name"></div>
+            <a class="name" :href="item.traderUrl" target="_blank" rel="noopener" x-text="item.name"></a>
             <span class="badge" x-text="item.hasPosition ? `${item.position.symbol} / ${item.position.dirLev}` : '空仓'"></span>
           </div>
 

@@ -12,7 +12,9 @@
       "ETH-USDT-SWAP": 0.1,
       "BTC-USDT-SWAP": 0.01,
       "SOL-USDT-SWAP": 1
-    }
+    },
+    "position_batch_size": 3,
+    "position_batch_interval_seconds": 10
   },
   "traders": [
     {

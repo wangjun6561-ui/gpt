@@ -3,6 +3,7 @@ import os
 import smtplib
 import threading
 import time
+import random
 from dataclasses import dataclass
 from datetime import datetime
 from email.header import Header
@@ -32,6 +33,7 @@ class OKXMonitor:
         self.config = self._load_config(config_path)
         self.debug = bool(self.config.get("debug", False))
         self.state_lock = threading.Lock()
+        self.refresh_lock = threading.Lock()
         self.running = False
         self.last_refresh_time = ""
 
@@ -48,6 +50,7 @@ class OKXMonitor:
 
         self.previous_trades: Dict[str, List[str]] = {}
         self.latest_positions: Dict[str, Dict[str, Any]] = {}
+        self._position_cursor = 0
         self._load_trades_history()
 
     @property
@@ -152,23 +155,43 @@ class OKXMonitor:
         with urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
+    def _request_with_retry(self, fn, hint: str) -> Optional[Dict[str, Any]]:
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = fn()
+                time.sleep(random.uniform(0.3, 0.5))
+                return result
+            except Exception as e:
+                if attempt == max_attempts:
+                    print(f"❌ {hint}失败(重试{max_attempts}次): {e}")
+                    return None
+                wait_s = random.uniform(0.3, 0.5)
+                self._log_debug(f"{hint} 第{attempt}次失败: {e}，{wait_s:.2f}s后重试")
+                time.sleep(wait_s)
+        return None
+
     def fetch_okx_positions(self, unique_name: str) -> Optional[List[Dict[str, Any]]]:
-        try:
+        def _req():
             payload = self._http_get_json(self.POSITION_URL, params={"uniqueName": unique_name})
             if payload.get("code") != "0":
-                return None
-            data = payload.get("data", [])
-            return data[0].get("posData", []) if data else []
-        except Exception as e:
-            print(f"❌ 获取持仓失败 {unique_name}: {e}")
+                raise RuntimeError(f"OKX code={payload.get('code')}")
+            return payload
+
+        payload = self._request_with_retry(_req, f"获取持仓 {unique_name}")
+        if not payload:
             return None
+        data = payload.get("data", [])
+        return data[0].get("posData", []) if data else []
 
     def fetch_okx_trades(self, unique_name: str, limit: int = 8) -> Optional[Dict[str, Any]]:
-        try:
-            return self._http_get_json(f"{self.TRADES_URL}?uniqueName={unique_name}&limit={limit}")
-        except Exception as e:
-            print(f"❌ 获取交易记录失败 {unique_name}: {e}")
-            return None
+        def _req():
+            payload = self._http_get_json(f"{self.TRADES_URL}?uniqueName={unique_name}&limit={limit}")
+            if payload.get("code") != "0":
+                raise RuntimeError(f"OKX code={payload.get('code')}")
+            return payload
+
+        return self._request_with_retry(_req, f"获取交易记录 {unique_name}")
 
     @staticmethod
     def parse_okx_trade(trade: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -277,16 +300,17 @@ class OKXMonitor:
     def refresh_positions(self, unique_names: Optional[Set[str]] = None):
         target = {t.unique_name for t in self.traders} if unique_names is None else set(unique_names)
 
-        with self.state_lock:
-            snapshot = dict(self.latest_positions)
+        with self.refresh_lock:
+            with self.state_lock:
+                snapshot = dict(self.latest_positions)
 
-        for trader in self.traders:
-            if trader.unique_name not in target:
-                continue
+            for trader in self.traders:
+                if trader.unique_name not in target:
+                    continue
 
-            pos_data = self.fetch_okx_positions(trader.unique_name)
-            if pos_data is None:
-                snapshot[trader.unique_name] = {
+                pos_data = self.fetch_okx_positions(trader.unique_name)
+                if pos_data is None:
+                    snapshot[trader.unique_name] = {
                     "name": trader.name,
                     "platform": trader.platform,
                     "uniqueName": trader.unique_name,
@@ -295,15 +319,16 @@ class OKXMonitor:
                     "positions": [],
                     "rawCount": 0,
                     "error": "拉取失败",
-                }
-                continue
+                        "traderUrl": f"https://www.okx.com/zh-hans/copy-trading/account/{trader.unique_name}?tab=trade",
+                    }
+                    continue
 
-            all_views = [self._position_to_view(p) for p in pos_data]
+                all_views = [self._position_to_view(p) for p in pos_data]
             # 第三点需求：根据保证金金额排序（大 -> 小）
-            all_views.sort(key=lambda x: x.get("marginValue", 0), reverse=True)
-            primary = self._pick_primary_position(all_views)
+                all_views.sort(key=lambda x: x.get("marginValue", 0), reverse=True)
+                primary = self._pick_primary_position(all_views)
 
-            snapshot[trader.unique_name] = {
+                snapshot[trader.unique_name] = {
                 "name": trader.name,
                 "platform": trader.platform,
                 "uniqueName": trader.unique_name,
@@ -312,7 +337,8 @@ class OKXMonitor:
                 "positions": all_views,
                 "rawCount": len(all_views),
                 "error": "",
-            }
+                    "traderUrl": f"https://www.okx.com/zh-hans/copy-trading/account/{trader.unique_name}?tab=trade",
+                }
 
         # 博主级排序：有持仓在前，空仓在后；有持仓时按主仓保证金降序
         sorted_items = sorted(
@@ -327,6 +353,25 @@ class OKXMonitor:
         with self.state_lock:
             self.latest_positions = dict(sorted_items)
             self.last_refresh_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+    def refresh_positions_round_robin(self):
+        batch_size = int(self.config.get("okx", {}).get("position_batch_size", 3))
+        if batch_size <= 0:
+            return
+        total = len(self.traders)
+        if total == 0:
+            return
+
+        start = self._position_cursor % total
+        selected = []
+        for i in range(min(batch_size, total)):
+            trader = self.traders[(start + i) % total]
+            selected.append(trader.unique_name)
+        self._position_cursor = (start + batch_size) % total
+
+        self._log_debug(f"分批刷新持仓: {selected}")
+        self.refresh_positions(set(selected))
 
     def _create_notification(self, trader: TraderConfig, trade: Dict[str, Any]) -> Dict[str, Any]:
         action_text, emoji, _ = self.parse_okx_trade(trade)
@@ -507,6 +552,15 @@ class OKXMonitor:
                 print(f"❌ 监控循环异常: {e}")
             time.sleep(interval)
 
+    def position_loop(self):
+        interval = int(self.config.get("okx", {}).get("position_batch_interval_seconds", 10))
+        while self.running:
+            try:
+                self.refresh_positions_round_robin()
+            except Exception as e:
+                print(f"❌ 持仓轮询异常: {e}")
+            time.sleep(interval)
+
 
 def create_flask_app(monitor: OKXMonitor) -> Flask:
     app = Flask(__name__, template_folder="templates")
@@ -538,6 +592,7 @@ def main():
         monitor.bootstrap_history()
 
     threading.Thread(target=monitor.monitor_loop, daemon=True).start()
+    threading.Thread(target=monitor.position_loop, daemon=True).start()
 
     web_conf = monitor.config.get("web", {})
     host = web_conf.get("host", "0.0.0.0")

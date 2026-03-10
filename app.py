@@ -373,11 +373,20 @@ class OKXMonitor:
 
     def refresh_positions(self, unique_names: Optional[Set[str]] = None):
         traders = self._get_traders_snapshot()
-        target = {t.unique_name for t in traders} if unique_names is None else set(unique_names)
+        active_unique_names = {t.unique_name for t in traders}
+        full_refresh = unique_names is None
+        target = active_unique_names if full_refresh else set(unique_names)
 
         with self.refresh_lock:
             with self.state_lock:
-                snapshot = dict(self.latest_positions)
+                # 全量刷新时不继承旧快照，避免残留 config 带单员
+                if full_refresh:
+                    snapshot: Dict[str, Dict[str, Any]] = {}
+                else:
+                    snapshot = {
+                        k: v for k, v in self.latest_positions.items()
+                        if k in active_unique_names
+                    }
 
             for trader in traders:
                 if trader.unique_name not in target:
@@ -417,7 +426,7 @@ class OKXMonitor:
 
         # 博主级排序：有持仓在前，空仓在后；有持仓时按主仓保证金降序
         sorted_items = sorted(
-            snapshot.items(),
+            ((k, v) for k, v in snapshot.items() if k in active_unique_names),
             key=lambda x: (
                 0 if x[1].get("hasPosition") else 1,
                 -float(x[1].get("position", {}).get("marginValue", 0) if x[1].get("position") else 0),

@@ -6,8 +6,8 @@
   <title>OKX 带单监控</title>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
-    :root{--bg:#0b1020;--panel:#151c32;--line:#2b3455;--text:#e6ecff;--muted:#9aa9d1;--long:#1f3f2b;--short:#472225;--empty:#1a2340;--accent:#60a5fa}
-    body.light{--bg:#f3f6fb;--panel:#fff;--line:#d5dfef;--text:#1f2a44;--muted:#5f6d8c;--long:#e8f8ef;--short:#fdeced;--empty:#eef3fb;--accent:#2563eb}
+    :root{--bg:#0b1020;--panel:#151c32;--line:#2b3455;--text:#e6ecff;--muted:#9aa9d1;--long:rgba(48,207,121,.18);--short:rgba(231,76,60,.18);--empty:#1a2340;--accent:rgb(66,133,244);--green:rgb(48,207,121);--red:rgb(231,76,60);--blue:rgb(66,133,244);--yellow:rgb(251,188,5)}
+    body.light{--bg:#f3f6fb;--panel:#fff;--line:#d5dfef;--text:#1f2a44;--muted:#5f6d8c;--long:rgba(48,207,121,.14);--short:rgba(231,76,60,.14);--empty:#eef3fb;--accent:rgb(66,133,244)}
     *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif}
     .wrap{max-width:1120px;margin:0 auto;padding:18px 12px 26px}
     .head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
@@ -15,30 +15,30 @@
     .btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:10px;cursor:pointer}
     .iconBtn{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;font-size:18px;padding:0}
     .select{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:10px}
-    .liqpanel{border:1px solid var(--line);background:linear-gradient(160deg,#f2f4f8,#e6ebf3);border-radius:14px;padding:12px;margin-bottom:12px;box-shadow:0 10px 24px rgba(0,0,0,.08)}
+    .liqpanel{border:1px solid var(--line);background:linear-gradient(160deg,#f5f6f8,#e9edf4);border-radius:14px;padding:12px;margin-bottom:12px;box-shadow:0 10px 24px rgba(0,0,0,.08)}
     body.light .liqpanel{background:linear-gradient(160deg,#f7f9fc,#eef2f7)}
     .liqgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-    .liqitem{padding:10px;border:1px solid #ffffff24;border-radius:10px;text-align:center;background:#0000001f}
+    .liqitem{padding:10px;border:1px solid rgba(66,133,244,.35);border-radius:10px;text-align:center;background:rgba(255,255,255,.55)}
     .liqcoin{font-size:13px;color:#1f2937;font-weight:800;text-transform:uppercase}.liqval{font-size:18px;font-weight:800;color:#111827;margin-top:2px}
     .game{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
     .game .side{padding:10px;border-radius:10px;border:1px solid #d1d5db;font-size:13px}
-    .game .long{background:#103623;color:#9af0bf}
-    .game .short{background:#3a1b1f;color:#ffb3b3}
+    .game .long{background:rgba(48,207,121,.18);color:rgb(20,110,63)}
+    .game .short{background:rgba(231,76,60,.18);color:rgb(142,33,22)}
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
     .card{border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 8px 20px rgba(0,0,0,.12)}
     .long{background:var(--long)} .short{background:var(--short)} .empty{background:var(--empty)}
     .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-    .name{font-size:17px;font-weight:700;color:var(--text);text-decoration:none}.name:hover{text-decoration:underline;color:var(--accent)}
-    .badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #ffffff33;background:#00000020}
+    .name{font-size:17px;font-weight:700;color:var(--text);text-decoration:none}.name:hover{text-decoration:underline;color:rgb(66,133,244)}
+    .badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid rgba(66,133,244,.45);background:rgba(66,133,244,.12)}
     .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0}
-    .big{padding:10px;border:1px dashed #ffffff33;border-radius:10px}
+    .big{padding:10px;border:1px dashed rgba(251,188,5,.55);border-radius:10px}
     .big .k{font-size:12px;color:var(--muted)} .big .v{font-size:20px;font-weight:800;margin-top:3px}
     .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .kv{padding:8px;border-bottom:1px dashed #ffffff24;display:flex;justify-content:space-between;font-size:13px}
     .kv .k{color:var(--muted)} .kv .v{font-weight:800}
-    .good{color:#22c55e !important;font-weight:700}.bad{color:#ef4444 !important;font-weight:700}.warn{color:#f59e0b !important;font-weight:700}
+    .good{color:rgb(48,207,121) !important;font-weight:700}.bad{color:rgb(231,76,60) !important;font-weight:700}.warn{color:rgb(251,188,5) !important;font-weight:700}
     .expand{margin-top:10px}.sub{margin-top:8px;padding:8px;border:1px dashed #ffffff33;border-radius:10px;background:#0000001e}
-    .err{margin-top:6px;font-size:12px;color:#fca5a5}
+    .err{margin-top:6px;font-size:12px;color:rgb(231,76,60)}
     .mask{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;padding:12px}
     .panel{width:min(360px,100%);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
     .input{width:100%;margin-top:8px;border:1px solid var(--line);background:transparent;color:var(--text);padding:8px;border-radius:8px}

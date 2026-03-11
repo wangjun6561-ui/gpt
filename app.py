@@ -57,7 +57,14 @@ class OKXMonitor:
         self.previous_trades: Dict[str, List[str]] = {}
         self.latest_positions: Dict[str, Dict[str, Any]] = {}
         self.recent_liq_panel: Dict[str, str] = {"eth": "--", "btc": "--", "sol": "--", "okx": "--"}
-        self.market_game: Dict[str, str] = {"long": "0U", "short": "0U"}
+        self.market_game: Dict[str, Any] = {
+            "long": "$0.00万",
+            "short": "$0.00万",
+            "long_value": 0.0,
+            "short_value": 0.0,
+            "long_ratio": 0.5,
+            "short_ratio": 0.5,
+        }
         self._position_cursor = 0
         self._load_trades_history()
 
@@ -164,12 +171,12 @@ class OKXMonitor:
         return text.rstrip("0").rstrip(".") if "." in text else text
 
     @staticmethod
-    def format_wan_u(num: Any, decimals: int = 2, unit: str = "万U") -> str:
+    def format_wan_u(num: Any, decimals: int = 2, unit: str = "万") -> str:
         try:
             value = float(num)
         except (TypeError, ValueError):
             value = 0.0
-        return f"{value / 10000:.{decimals}f}{unit}"
+        return f"${value / 10000:.{decimals}f}{unit}"
 
     def _http_get_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if params:
@@ -307,13 +314,10 @@ class OKXMonitor:
         return len(self.traders)
 
     def switch_to_all_rank_traders(self) -> int:
-        config_ids = {t.unique_name for t in self.base_traders}
-        merged_map: Dict[str, TraderConfig] = {}
+        merged_map: Dict[str, TraderConfig] = {t.unique_name: t for t in self.base_traders}
 
         for rank_type in self.ALL_RANK_TYPES:
             for trader in self.fetch_follow_rank_traders(rank_type):
-                if trader.unique_name in config_ids:
-                    continue
                 prev = merged_map.get(trader.unique_name)
                 if prev is None or trader.aum > prev.aum:
                     merged_map[trader.unique_name] = trader
@@ -413,6 +417,7 @@ class OKXMonitor:
         return {
             "instId": inst_id,
             "symbol": inst_id.replace("-SWAP", "").replace("-", "/").lower(),
+            "symbolBase": inst_id.split("-")[0].upper() if inst_id else "--",
             "direction": direction,
             "lever": pos.get("lever", "0"),
             "dirLev": f"{direction}{pos.get('lever', '0')}x",
@@ -426,7 +431,7 @@ class OKXMonitor:
             "marginValue": margin_value,
             "notionalUsd": self.format_number(pos.get("notionalUsd", 0), 4),
             "notionalValue": float(pos.get("notionalUsd", 0) or 0),
-            "notionalWan": self.format_wan_u(pos.get("notionalUsd", 0), 2, "万U"),
+            "notionalWan": self.format_wan_u(pos.get("notionalUsd", 0), 2, "万"),
             "upl": self.format_number(pos.get("upl", 0), 4),
             "liqPx": liq_px,
             "mgnRate": f"{mgn_ratio * 100:.2f}%",
@@ -467,7 +472,7 @@ class OKXMonitor:
                     continue
                 prev = best.get(base)
                 if prev is None or score < prev[0]:
-                    best[base] = (score, f"{liq}U")
+                    best[base] = (score, f"${liq}")
 
         panel = {k: "--" for k in coin_keys}
         for k, (_, v) in best.items():
@@ -475,7 +480,7 @@ class OKXMonitor:
         return panel
 
     @staticmethod
-    def _build_market_game(items: List[Dict[str, Any]]) -> Dict[str, str]:
+    def _build_market_game(items: List[Dict[str, Any]]) -> Dict[str, Any]:
         long_total = 0.0
         short_total = 0.0
         for item in items:
@@ -488,9 +493,19 @@ class OKXMonitor:
                     short_total += value
                 else:
                     long_total += value
+        total = long_total + short_total
+        if total <= 0:
+            long_ratio = short_ratio = 0.5
+        else:
+            long_ratio = long_total / total
+            short_ratio = short_total / total
         return {
-            "long": OKXMonitor.format_wan_u(long_total, 2, "万u"),
-            "short": OKXMonitor.format_wan_u(short_total, 2, "万u"),
+            "long": OKXMonitor.format_wan_u(long_total, 2, "万"),
+            "short": OKXMonitor.format_wan_u(short_total, 2, "万"),
+            "long_value": long_total,
+            "short_value": short_total,
+            "long_ratio": long_ratio,
+            "short_ratio": short_ratio,
         }
 
     def refresh_positions(self, unique_names: Optional[Set[str]] = None):

@@ -20,10 +20,13 @@
     .liqgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
     .liqitem{padding:10px;border:1px solid rgba(66,133,244,.35);border-radius:10px;text-align:center;background:rgba(255,255,255,.55)}
     .liqcoin{font-size:13px;color:#1f2937;font-weight:800;text-transform:uppercase}.liqval{font-size:18px;font-weight:800;color:#111827;margin-top:2px}
-    .game{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .game .side{padding:10px;border-radius:10px;border:1px solid #d1d5db;font-size:13px}
-    .game .long{background:rgba(48,207,121,.18);color:rgb(20,110,63)}
-    .game .short{background:rgba(231,76,60,.18);color:rgb(142,33,22)}
+    .game{margin-top:10px}
+    .game-head{display:flex;justify-content:space-between;gap:10px;font-size:13px;margin-bottom:6px}
+    .game-head .long{color:rgb(20,110,63);font-weight:800}
+    .game-head .short{color:rgb(142,33,22);font-weight:800}
+    .game-bar{width:100%;height:14px;border-radius:999px;overflow:hidden;border:1px solid #d1d5db;display:flex;background:#fff}
+    .game-long{height:100%;background:rgb(48,207,121)}
+    .game-short{height:100%;background:rgb(231,76,60)}
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
     .card{border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 8px 20px rgba(0,0,0,.12)}
     .long{background:var(--long)} .short{background:var(--short)} .empty{background:var(--empty)}
@@ -70,8 +73,14 @@
         <div class="liqitem"><div class="liqcoin">OKX</div><div class="liqval" x-text="state.recent_liq_panel?.okx || '--'"></div></div>
       </div>
       <div class="game">
-        <div class="side long">多头总持仓：<b x-text="state.market_game?.long || '0U'"></b></div>
-        <div class="side short">空头总持仓：<b x-text="state.market_game?.short || '0U'"></b></div>
+        <div class="game-head">
+          <div class="long">多头总持仓：<b x-text="state.market_game?.long || '$0.00万'"></b></div>
+          <div class="short">空头总持仓：<b x-text="state.market_game?.short || '$0.00万'"></b></div>
+        </div>
+        <div class="game-bar">
+          <div class="game-long" :style="`width:${Math.max(0, Math.min(100, (state.market_game?.long_ratio || 0) * 100))}%`"></div>
+          <div class="game-short" :style="`width:${Math.max(0, Math.min(100, (state.market_game?.short_ratio || 0) * 100))}%`"></div>
+        </div>
       </div>
     </div>
 
@@ -80,21 +89,21 @@
         <div class="card" :class="cardClass(item)">
           <div class="top">
             <a class="name" :href="item.traderUrl" target="_blank" rel="noopener" x-text="item.name"></a>
-            <span class="badge" x-text="item.hasPosition ? `${item.position.symbol} / ${item.position.dirLev}` : '空仓'"></span>
+            <span class="badge" x-text="item.hasPosition ? `${item.position.symbolBase} ${item.position.dirLev}` : '空仓'"></span>
           </div>
           <template x-if="item.hasPosition">
             <div>
               <div class="row2">
-                <div class="big"><div class="k">开仓均价</div><div class="v" x-text="`${item.position.avgPx}U`"></div></div>
+                <div class="big"><div class="k">开仓均价</div><div class="v" x-text="`$${item.position.avgPx}`"></div></div>
                 <div class="big"><div class="k">收益率</div><div class="v" :class="valueClass(item.position.uplRate)" x-text="item.position.uplRate"></div></div>
               </div>
               <div class="pair">
                 <div class="kv"><span class="k">持仓</span><span class="v" x-text="`${item.position.contracts}张`"></span></div>
-                <div class="kv"><span class="k">保证金</span><span class="v" x-text="`${item.position.margin}U`"></span></div>
+                <div class="kv"><span class="k">保证金</span><span class="v" x-text="`$${item.position.margin}`"></span></div>
                 <div class="kv"><span class="k">持仓值</span><span class="v" x-text="item.position.notionalWan"></span></div>
-                <div class="kv"><span class="k">收益</span><span class="v" :class="valueClass(item.position.upl)" x-text="`${item.position.upl}U`"></span></div>
-                <div class="kv"><span class="k">标记价</span><span class="v" x-text="item.position.markPx === '0' ? '--' : `${item.position.markPx}U`"></span></div>
-                <div class="kv"><span class="k">爆仓价</span><span class="v" x-text="item.position.liqPx === '--' ? '--' : `${item.position.liqPx}U`"></span></div>
+                <div class="kv"><span class="k">收益</span><span class="v" :class="valueClass(item.position.upl)" x-text="`$${item.position.upl}`"></span></div>
+                <div class="kv"><span class="k">标记价</span><span class="v" x-text="item.position.markPx === '0' ? '--' : `$${item.position.markPx}`"></span></div>
+                <div class="kv"><span class="k">爆仓价</span><span class="v" x-text="item.position.liqPx === '--' ? '--' : `$${item.position.liqPx}`"></span></div>
                 <div class="kv"><span class="k">保证金率</span><span class="v" :class="item.position.danger ? 'warn' : 'good'" x-text="item.position.mgnRate"></span></div>
                 <div class="kv"><span class="k">币量</span><span class="v" x-text="item.position.coinAmount"></span></div>
               </div>
@@ -103,9 +112,9 @@
                 <div x-show="expanded[item.uniqueName]">
                   <template x-for="p in item.positions" :key="`${p.instId}-${p.margin}`">
                     <div class="sub">
-                      <div class="kv"><span class="k">币种</span><span class="v" x-text="p.symbol"></span></div>
+                      <div class="kv"><span class="k">币种</span><span class="v" x-text="p.symbolBase"></span></div>
                       <div class="kv"><span class="k">方向</span><span class="v" x-text="p.dirLev"></span></div>
-                      <div class="kv"><span class="k">保证金</span><span class="v" x-text="`${p.margin}U`"></span></div>
+                      <div class="kv"><span class="k">保证金</span><span class="v" x-text="`$${p.margin}`"></span></div>
                       <div class="kv"><span class="k">收益率</span><span class="v" :class="valueClass(p.uplRate)" x-text="p.uplRate"></span></div>
                     </div>
                   </template>
@@ -137,7 +146,7 @@
   <script>
     function dashboard(){
       return {
-        state:{last_refresh_time:'',count:0,items:[],recent_liq_panel:{eth:'--',btc:'--',sol:'--',okx:'--'},market_game:{long:'0U',short:'0U'}},
+        state:{last_refresh_time:'',count:0,items:[],recent_liq_panel:{eth:'--',btc:'--',sol:'--',okx:'--'},market_game:{long:'$0.00万',short:'$0.00万',long_ratio:.5,short_ratio:.5}},
         expanded:{},
         theme: localStorage.getItem('okx_theme') || 'dark',
         showSettings:false,

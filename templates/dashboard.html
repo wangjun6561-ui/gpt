@@ -15,10 +15,14 @@
     .btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:10px;cursor:pointer}
     .iconBtn{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;font-size:18px;padding:0}
     .select{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:10px}
-    .liqpanel{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px;margin-bottom:12px}
+    .liqpanel{border:1px solid var(--line);background:linear-gradient(160deg,var(--panel),#0f1730);border-radius:14px;padding:12px;margin-bottom:12px;box-shadow:0 10px 24px rgba(0,0,0,.15)}
     .liqgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-    .liqitem{padding:8px;border:1px dashed #ffffff2a;border-radius:10px;text-align:center}
+    .liqitem{padding:10px;border:1px solid #ffffff24;border-radius:10px;text-align:center;background:#0000001f}
     .liqcoin{font-size:12px;color:var(--muted);text-transform:uppercase}.liqval{font-size:18px;font-weight:800;color:var(--text);margin-top:2px}
+    .game{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .game .side{padding:10px;border-radius:10px;border:1px solid #ffffff24;font-size:13px}
+    .game .long{background:#103623;color:#9af0bf}
+    .game .short{background:#3a1b1f;color:#ffb3b3}
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
     .card{border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 8px 20px rgba(0,0,0,.12)}
     .long{background:var(--long)} .short{background:var(--short)} .empty{background:var(--empty)}
@@ -27,17 +31,17 @@
     .badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #ffffff33;background:#00000020}
     .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0}
     .big{padding:10px;border:1px dashed #ffffff33;border-radius:10px}
-    .big .k{font-size:12px;color:var(--muted)} .big .v{font-size:20px;font-weight:800;color:var(--text);margin-top:3px}
+    .big .k{font-size:12px;color:var(--muted)} .big .v{font-size:20px;font-weight:800;margin-top:3px}
     .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .kv{padding:8px;border-bottom:1px dashed #ffffff24;display:flex;justify-content:space-between;font-size:13px}
-    .kv .k{color:var(--muted)} .kv .v{font-weight:800;color:var(--text)}
-    .good{color:#22c55e;font-weight:700}.bad{color:#ef4444;font-weight:700}.warn{color:#f59e0b;font-weight:700}
+    .kv .k{color:var(--muted)} .kv .v{font-weight:800}
+    .good{color:#22c55e !important;font-weight:700}.bad{color:#ef4444 !important;font-weight:700}.warn{color:#f59e0b !important;font-weight:700}
     .expand{margin-top:10px}.sub{margin-top:8px;padding:8px;border:1px dashed #ffffff33;border-radius:10px;background:#0000001e}
     .err{margin-top:6px;font-size:12px;color:#fca5a5}
     .mask{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;padding:12px}
     .panel{width:min(360px,100%);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
     .input{width:100%;margin-top:8px;border:1px solid var(--line);background:transparent;color:var(--text);padding:8px;border-radius:8px}
-    @media (max-width:640px){.title{font-size:20px}.row2,.pair,.liqgrid{grid-template-columns:1fr}}
+    @media (max-width:640px){.title{font-size:20px}.row2,.pair,.liqgrid,.game{grid-template-columns:1fr}}
   </style>
 </head>
 <body x-data="dashboard()" :class="theme">
@@ -63,6 +67,10 @@
         <div class="liqitem"><div class="liqcoin">BTC</div><div class="liqval" x-text="state.recent_liq_panel?.btc || '--'"></div></div>
         <div class="liqitem"><div class="liqcoin">SOL</div><div class="liqval" x-text="state.recent_liq_panel?.sol || '--'"></div></div>
         <div class="liqitem"><div class="liqcoin">OKX</div><div class="liqval" x-text="state.recent_liq_panel?.okx || '--'"></div></div>
+      </div>
+      <div class="game">
+        <div class="side long">多头总持仓：<b x-text="state.market_game?.long || '0U'"></b></div>
+        <div class="side short">空头总持仓：<b x-text="state.market_game?.short || '0U'"></b></div>
       </div>
     </div>
 
@@ -128,7 +136,7 @@
   <script>
     function dashboard(){
       return {
-        state:{last_refresh_time:'',count:0,items:[],recent_liq_panel:{eth:'--',btc:'--',sol:'--',okx:'--'}},
+        state:{last_refresh_time:'',count:0,items:[],recent_liq_panel:{eth:'--',btc:'--',sol:'--',okx:'--'},market_game:{long:'0U',short:'0U'}},
         expanded:{},
         theme: localStorage.getItem('okx_theme') || 'dark',
         showSettings:false,

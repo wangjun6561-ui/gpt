@@ -57,6 +57,7 @@ class OKXMonitor:
         self.previous_trades: Dict[str, List[str]] = {}
         self.latest_positions: Dict[str, Dict[str, Any]] = {}
         self.recent_liq_panel: Dict[str, str] = {"eth": "--", "btc": "--", "sol": "--", "okx": "--"}
+        self.market_game: Dict[str, str] = {"long": "0U", "short": "0U"}
         self._position_cursor = 0
         self._load_trades_history()
 
@@ -464,6 +465,25 @@ class OKXMonitor:
             panel[k] = v
         return panel
 
+    @staticmethod
+    def _build_market_game(items: List[Dict[str, Any]]) -> Dict[str, str]:
+        long_total = 0.0
+        short_total = 0.0
+        for item in items:
+            for pos in item.get("positions", []):
+                try:
+                    value = abs(float(pos.get("notionalValue", 0) or 0))
+                except (TypeError, ValueError):
+                    continue
+                if str(pos.get("direction", "")) == "空":
+                    short_total += value
+                else:
+                    long_total += value
+        return {
+            "long": f"{OKXMonitor.format_number(long_total, 4)}U",
+            "short": f"{OKXMonitor.format_number(short_total, 4)}U",
+        }
+
     def refresh_positions(self, unique_names: Optional[Set[str]] = None):
         traders = self._get_traders_snapshot()
         active_unique_names = {t.unique_name for t in traders}
@@ -534,12 +554,15 @@ class OKXMonitor:
             key=_sort_key,
         )
 
-        liq_panel = self._build_recent_liq_panel([v for _, v in sorted_items])
+        ordered_items = [v for _, v in sorted_items]
+        liq_panel = self._build_recent_liq_panel(ordered_items)
+        market_game = self._build_market_game(ordered_items)
 
         with self.state_lock:
             self.latest_positions = dict(sorted_items)
             self.last_refresh_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.recent_liq_panel = liq_panel
+            self.market_game = market_game
 
 
     def refresh_positions_round_robin(self):
@@ -766,6 +789,7 @@ def create_flask_app(monitor: OKXMonitor) -> Flask:
                 "rank_type": monitor.current_rank_type,
                 "update_interval_seconds": monitor.update_interval_seconds,
                 "recent_liq_panel": monitor.recent_liq_panel,
+                "market_game": monitor.market_game,
             }
         return jsonify(payload)
 

@@ -47,6 +47,7 @@ class OKXMonitor:
         self.base_traders = self._load_traders()
         self.traders = list(self.base_traders)
         self.current_rank_type = "__config__"
+        self.update_interval_seconds = float(self.config.get("interval_seconds", 20))
 
         data_dir = Path(self.config.get("data_dir", "data"))
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,14 @@ class OKXMonitor:
         self.latest_positions: Dict[str, Dict[str, Any]] = {}
         self._position_cursor = 0
         self._load_trades_history()
+
+    def set_update_interval_seconds(self, seconds: float) -> float:
+        value = float(seconds)
+        if value < 0.5:
+            value = 0.5
+        self.update_interval_seconds = value
+        self._log_debug(f"更新间隔已调整为 {value}s")
+        return self.update_interval_seconds
 
     @staticmethod
     def _trader_url(unique_name: str) -> str:
@@ -677,22 +686,20 @@ class OKXMonitor:
 
     def monitor_loop(self):
         self.running = True
-        interval = int(self.config.get("interval_seconds", 20))
         while self.running:
             try:
                 self.check_trades_once()
             except Exception as e:
                 print(f"❌ 监控循环异常: {e}")
-            time.sleep(interval)
+            time.sleep(self.update_interval_seconds)
 
     def position_loop(self):
-        interval = int(self.config.get("okx", {}).get("position_batch_interval_seconds", 10))
         while self.running:
             try:
                 self.refresh_positions_round_robin()
             except Exception as e:
                 print(f"❌ 持仓轮询异常: {e}")
-            time.sleep(interval)
+            time.sleep(self.update_interval_seconds)
 
 
 def create_flask_app(monitor: OKXMonitor) -> Flask:
@@ -710,6 +717,7 @@ def create_flask_app(monitor: OKXMonitor) -> Flask:
                 "count": len(monitor.latest_positions),
                 "items": list(monitor.latest_positions.values()),
                 "rank_type": monitor.current_rank_type,
+                "update_interval_seconds": monitor.update_interval_seconds,
             }
         return jsonify(payload)
 
@@ -726,6 +734,18 @@ def create_flask_app(monitor: OKXMonitor) -> Flask:
         if total <= 0:
             return jsonify({"ok": False, "message": "未获取到排行带单员，请稍后重试"}), 502
         return jsonify({"ok": True, "count": total, "rank_type": rank_type})
+
+    @app.post("/api/settings")
+    def api_settings():
+        body = request.get_json(silent=True) or {}
+        seconds = body.get("update_interval_seconds")
+        if seconds is None:
+            return jsonify({"ok": False, "message": "缺少 update_interval_seconds"}), 400
+        try:
+            value = monitor.set_update_interval_seconds(float(seconds))
+        except Exception:
+            return jsonify({"ok": False, "message": "更新时间必须是数字"}), 400
+        return jsonify({"ok": True, "update_interval_seconds": value})
 
     return app
 

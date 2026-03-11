@@ -15,12 +15,13 @@
     .btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:10px;cursor:pointer}
     .iconBtn{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;font-size:18px;padding:0}
     .select{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:10px}
-    .liqpanel{border:1px solid var(--line);background:linear-gradient(160deg,var(--panel),#0f1730);border-radius:14px;padding:12px;margin-bottom:12px;box-shadow:0 10px 24px rgba(0,0,0,.15)}
+    .liqpanel{border:1px solid var(--line);background:linear-gradient(160deg,#f2f4f8,#e6ebf3);border-radius:14px;padding:12px;margin-bottom:12px;box-shadow:0 10px 24px rgba(0,0,0,.08)}
+    body.light .liqpanel{background:linear-gradient(160deg,#f7f9fc,#eef2f7)}
     .liqgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
     .liqitem{padding:10px;border:1px solid #ffffff24;border-radius:10px;text-align:center;background:#0000001f}
-    .liqcoin{font-size:12px;color:var(--muted);text-transform:uppercase}.liqval{font-size:18px;font-weight:800;color:var(--text);margin-top:2px}
+    .liqcoin{font-size:13px;color:#1f2937;font-weight:800;text-transform:uppercase}.liqval{font-size:18px;font-weight:800;color:#111827;margin-top:2px}
     .game{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .game .side{padding:10px;border-radius:10px;border:1px solid #ffffff24;font-size:13px}
+    .game .side{padding:10px;border-radius:10px;border:1px solid #d1d5db;font-size:13px}
     .game .long{background:#103623;color:#9af0bf}
     .game .short{background:#3a1b1f;color:#ffb3b3}
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
@@ -90,7 +91,7 @@
               <div class="pair">
                 <div class="kv"><span class="k">持仓</span><span class="v" x-text="`${item.position.contracts}张`"></span></div>
                 <div class="kv"><span class="k">保证金</span><span class="v" x-text="`${item.position.margin}U`"></span></div>
-                <div class="kv"><span class="k">持仓值</span><span class="v" x-text="`${item.position.notionalUsd}U`"></span></div>
+                <div class="kv"><span class="k">持仓值</span><span class="v" x-text="item.position.notionalWan"></span></div>
                 <div class="kv"><span class="k">收益</span><span class="v" :class="valueClass(item.position.upl)" x-text="`${item.position.upl}U`"></span></div>
                 <div class="kv"><span class="k">标记价</span><span class="v" x-text="item.position.markPx === '0' ? '--' : `${item.position.markPx}U`"></span></div>
                 <div class="kv"><span class="k">爆仓价</span><span class="v" x-text="item.position.liqPx === '--' ? '--' : `${item.position.liqPx}U`"></span></div>

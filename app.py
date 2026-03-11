@@ -163,6 +163,14 @@ class OKXMonitor:
         text = f"{value:.{decimals}f}"
         return text.rstrip("0").rstrip(".") if "." in text else text
 
+    @staticmethod
+    def format_wan_u(num: Any, decimals: int = 2, unit: str = "万U") -> str:
+        try:
+            value = float(num)
+        except (TypeError, ValueError):
+            value = 0.0
+        return f"{value / 10000:.{decimals}f}{unit}"
+
     def _http_get_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if params:
             query = urlencode(params)
@@ -418,6 +426,7 @@ class OKXMonitor:
             "marginValue": margin_value,
             "notionalUsd": self.format_number(pos.get("notionalUsd", 0), 4),
             "notionalValue": float(pos.get("notionalUsd", 0) or 0),
+            "notionalWan": self.format_wan_u(pos.get("notionalUsd", 0), 2, "万U"),
             "upl": self.format_number(pos.get("upl", 0), 4),
             "liqPx": liq_px,
             "mgnRate": f"{mgn_ratio * 100:.2f}%",
@@ -480,8 +489,8 @@ class OKXMonitor:
                 else:
                     long_total += value
         return {
-            "long": f"{OKXMonitor.format_number(long_total, 4)}U",
-            "short": f"{OKXMonitor.format_number(short_total, 4)}U",
+            "long": OKXMonitor.format_wan_u(long_total, 2, "万u"),
+            "short": OKXMonitor.format_wan_u(short_total, 2, "万u"),
         }
 
     def refresh_positions(self, unique_names: Optional[Set[str]] = None):

@@ -6,40 +6,38 @@
   <title>OKX 带单监控</title>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style>
-    :root{
-      --bg:#0b1020;--panel:#151c32;--line:#2b3455;--text:#e6ecff;--muted:#9aa9d1;
-      --long:#1f3f2b;--short:#472225;--empty:#1a2340;--accent:#60a5fa;
-    }
-    body.light{
-      --bg:#f3f6fb;--panel:#ffffff;--line:#d5dfef;--text:#1f2a44;--muted:#5f6d8c;
-      --long:#e8f8ef;--short:#fdeced;--empty:#eef3fb;--accent:#2563eb;
-    }
+    :root{--bg:#0b1020;--panel:#151c32;--line:#2b3455;--text:#e6ecff;--muted:#9aa9d1;--long:#1f3f2b;--short:#472225;--empty:#1a2340;--accent:#60a5fa}
+    body.light{--bg:#f3f6fb;--panel:#fff;--line:#d5dfef;--text:#1f2a44;--muted:#5f6d8c;--long:#e8f8ef;--short:#fdeced;--empty:#eef3fb;--accent:#2563eb}
     *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif}
     .wrap{max-width:1120px;margin:0 auto;padding:18px 12px 26px}
     .head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
     .title{font-size:24px;font-weight:700}.meta{font-size:13px;color:var(--muted)}
     .btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:10px;cursor:pointer}
+    .iconBtn{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;font-size:18px;padding:0}
     .select{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:10px}
+    .liqpanel{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px;margin-bottom:12px}
+    .liqgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .liqitem{padding:8px;border:1px dashed #ffffff2a;border-radius:10px;text-align:center}
+    .liqcoin{font-size:12px;color:var(--muted);text-transform:uppercase}.liqval{font-size:18px;font-weight:800;color:var(--text);margin-top:2px}
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
     .card{border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 8px 20px rgba(0,0,0,.12)}
     .long{background:var(--long)} .short{background:var(--short)} .empty{background:var(--empty)}
     .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-    .name{font-size:17px;font-weight:700;color:var(--text);text-decoration:none}.name:hover{text-decoration:underline;color:var(--accent)}.badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #ffffff33;background:#00000020}
+    .name{font-size:17px;font-weight:700;color:var(--text);text-decoration:none}.name:hover{text-decoration:underline;color:var(--accent)}
+    .badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #ffffff33;background:#00000020}
     .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0}
     .big{padding:10px;border:1px dashed #ffffff33;border-radius:10px}
-    .big .k{font-size:12px;color:var(--muted)} .big .v{font-size:20px;font-weight:700;margin-top:3px}
+    .big .k{font-size:12px;color:var(--muted)} .big .v{font-size:20px;font-weight:800;color:var(--text);margin-top:3px}
     .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .kv{padding:8px;border-bottom:1px dashed #ffffff24;display:flex;justify-content:space-between;font-size:13px}
-    .kv .k{color:var(--muted)}
-    .good{color:#22c55e;font-weight:600}.bad{color:#ef4444;font-weight:600}.warn{color:#f59e0b;font-weight:600}
-    .expand{margin-top:10px}
-    .sub{margin-top:8px;padding:8px;border:1px dashed #ffffff33;border-radius:10px;background:#0000001e}
+    .kv .k{color:var(--muted)} .kv .v{font-weight:800;color:var(--text)}
+    .good{color:#22c55e;font-weight:700}.bad{color:#ef4444;font-weight:700}.warn{color:#f59e0b;font-weight:700}
+    .expand{margin-top:10px}.sub{margin-top:8px;padding:8px;border:1px dashed #ffffff33;border-radius:10px;background:#0000001e}
     .err{margin-top:6px;font-size:12px;color:#fca5a5}
-    .iconBtn{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;font-size:18px;padding:0}
     .mask{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;padding:12px}
     .panel{width:min(360px,100%);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
     .input{width:100%;margin-top:8px;border:1px solid var(--line);background:transparent;color:var(--text);padding:8px;border-radius:8px}
-    @media (max-width:640px){.title{font-size:20px}.row2,.pair{grid-template-columns:1fr}}
+    @media (max-width:640px){.title{font-size:20px}.row2,.pair,.liqgrid{grid-template-columns:1fr}}
   </style>
 </head>
 <body x-data="dashboard()" :class="theme">
@@ -51,12 +49,20 @@
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select class="select" x-model="selectedRankType" @change="switchRankType()">
-          <template x-for="opt in rankOptions" :key="opt.value">
-            <option :value="opt.value" x-text="opt.label"></option>
-          </template>
+          <template x-for="opt in rankOptions" :key="opt.value"><option :value="opt.value" x-text="opt.label"></option></template>
         </select>
         <button class="btn iconBtn" @click="openSettings()" title="设置">⚙️</button>
         <button class="btn" @click="toggleTheme()" x-text="theme === 'light' ? '切换夜色' : '切换白天'"></button>
+      </div>
+    </div>
+
+    <div class="liqpanel">
+      <div class="meta" style="margin-bottom:8px">最近爆仓价</div>
+      <div class="liqgrid">
+        <div class="liqitem"><div class="liqcoin">ETH</div><div class="liqval" x-text="state.recent_liq_panel?.eth || '--'"></div></div>
+        <div class="liqitem"><div class="liqcoin">BTC</div><div class="liqval" x-text="state.recent_liq_panel?.btc || '--'"></div></div>
+        <div class="liqitem"><div class="liqcoin">SOL</div><div class="liqval" x-text="state.recent_liq_panel?.sol || '--'"></div></div>
+        <div class="liqitem"><div class="liqcoin">OKX</div><div class="liqval" x-text="state.recent_liq_panel?.okx || '--'"></div></div>
       </div>
     </div>
 
@@ -67,47 +73,37 @@
             <a class="name" :href="item.traderUrl" target="_blank" rel="noopener" x-text="item.name"></a>
             <span class="badge" x-text="item.hasPosition ? `${item.position.symbol} / ${item.position.dirLev}` : '空仓'"></span>
           </div>
-
           <template x-if="item.hasPosition">
             <div>
               <div class="row2">
-                <div class="big">
-                  <div class="k">开仓均价</div>
-                  <div class="v" x-text="`${item.position.avgPx}U`"></div>
-                </div>
-                <div class="big">
-                  <div class="k">收益率</div>
-                  <div class="v" :class="valueClass(item.position.uplRate)" x-text="item.position.uplRate"></div>
-                </div>
+                <div class="big"><div class="k">开仓均价</div><div class="v" x-text="`${item.position.avgPx}U`"></div></div>
+                <div class="big"><div class="k">收益率</div><div class="v" :class="valueClass(item.position.uplRate)" x-text="item.position.uplRate"></div></div>
               </div>
-
               <div class="pair">
-                <div class="kv"><span class="k">持仓</span><span x-text="`${item.position.contracts}张`"></span></div>
-                <div class="kv"><span class="k">保证金</span><span x-text="`${item.position.margin}U`"></span></div>
-                <div class="kv"><span class="k">持仓值</span><span x-text="`${item.position.notionalUsd}U`"></span></div>
-                <div class="kv"><span class="k">收益</span><span :class="valueClass(item.position.upl)" x-text="`${item.position.upl}U`"></span></div>
-                <div class="kv"><span class="k">标记价</span><span x-text="item.position.markPx === '0' ? '--' : `${item.position.markPx}U`"></span></div>
-                <div class="kv"><span class="k">爆仓价</span><span x-text="item.position.liqPx === '--' ? '--' : `${item.position.liqPx}U`"></span></div>
-                <div class="kv"><span class="k">保证金率</span><span :class="item.position.danger ? 'warn' : 'good'" x-text="item.position.mgnRate"></span></div>
-                <div class="kv"><span class="k">币量</span><span x-text="item.position.coinAmount"></span></div>
+                <div class="kv"><span class="k">持仓</span><span class="v" x-text="`${item.position.contracts}张`"></span></div>
+                <div class="kv"><span class="k">保证金</span><span class="v" x-text="`${item.position.margin}U`"></span></div>
+                <div class="kv"><span class="k">持仓值</span><span class="v" x-text="`${item.position.notionalUsd}U`"></span></div>
+                <div class="kv"><span class="k">收益</span><span class="v" :class="valueClass(item.position.upl)" x-text="`${item.position.upl}U`"></span></div>
+                <div class="kv"><span class="k">标记价</span><span class="v" x-text="item.position.markPx === '0' ? '--' : `${item.position.markPx}U`"></span></div>
+                <div class="kv"><span class="k">爆仓价</span><span class="v" x-text="item.position.liqPx === '--' ? '--' : `${item.position.liqPx}U`"></span></div>
+                <div class="kv"><span class="k">保证金率</span><span class="v" :class="item.position.danger ? 'warn' : 'good'" x-text="item.position.mgnRate"></span></div>
+                <div class="kv"><span class="k">币量</span><span class="v" x-text="item.position.coinAmount"></span></div>
               </div>
-
               <div class="expand">
                 <button class="btn" @click="toggle(item.uniqueName)" x-text="expanded[item.uniqueName] ? '收起全部持仓' : `展开全部持仓 (${item.positions.length})`"></button>
                 <div x-show="expanded[item.uniqueName]">
                   <template x-for="p in item.positions" :key="`${p.instId}-${p.margin}`">
                     <div class="sub">
-                      <div class="kv"><span class="k">币种</span><span x-text="p.symbol"></span></div>
-                      <div class="kv"><span class="k">方向</span><span x-text="p.dirLev"></span></div>
-                      <div class="kv"><span class="k">保证金</span><span x-text="`${p.margin}U`"></span></div>
-                      <div class="kv"><span class="k">收益率</span><span :class="valueClass(p.uplRate)" x-text="p.uplRate"></span></div>
+                      <div class="kv"><span class="k">币种</span><span class="v" x-text="p.symbol"></span></div>
+                      <div class="kv"><span class="k">方向</span><span class="v" x-text="p.dirLev"></span></div>
+                      <div class="kv"><span class="k">保证金</span><span class="v" x-text="`${p.margin}U`"></span></div>
+                      <div class="kv"><span class="k">收益率</span><span class="v" :class="valueClass(p.uplRate)" x-text="p.uplRate"></span></div>
                     </div>
                   </template>
                 </div>
               </div>
             </div>
           </template>
-
           <template x-if="!item.hasPosition"><div class="meta">当前无持仓</div></template>
           <div x-show="item.error" class="err" x-text="item.error"></div>
         </div>
@@ -127,81 +123,52 @@
         </div>
       </div>
     </div>
+  </template>
 
   <script>
     function dashboard(){
       return {
-        state:{last_refresh_time:'',count:0,items:[]},
+        state:{last_refresh_time:'',count:0,items:[],recent_liq_panel:{eth:'--',btc:'--',sol:'--',okx:'--'}},
         expanded:{},
         theme: localStorage.getItem('okx_theme') || 'dark',
-        showSettings: false,
-        settingsInterval: '20',
-        selectedRankType: '',
-        rankOptions: [
-          { label: '配置', value: '__config__' },
-          { label: '所有', value: '__all__' },
-          { label: '综合排序', value: '' },
-          { label: '收益率', value: 'yieldRatio' },
-          { label: '收益额', value: 'pnl' },
-          { label: '胜率', value: 'winRatio' },
-          { label: '带单规模', value: 'aum' },
-          { label: '当前跟单人数', value: 'traderFollowerLimit' },
-          { label: '跟单用户收益', value: 'followTotalPnl' },
+        showSettings:false,
+        settingsInterval:'20',
+        selectedRankType:'',
+        rankOptions:[
+          { label:'配置', value:'__config__' },
+          { label:'所有', value:'__all__' },
+          { label:'综合排序', value:'' },
+          { label:'收益率', value:'yieldRatio' },
+          { label:'收益额', value:'pnl' },
+          { label:'胜率', value:'winRatio' },
+          { label:'带单规模', value:'aum' },
+          { label:'当前跟单人数', value:'traderFollowerLimit' },
+          { label:'跟单用户收益', value:'followTotalPnl' },
         ],
         valueClass(v){ return String(v).startsWith('-') ? 'bad' : 'good'; },
-        cardClass(item){
-          if(!item.hasPosition) return 'empty';
-          return item.position.direction === '空' ? 'short' : 'long';
-        },
-        toggle(key){ this.expanded[key] = !this.expanded[key]; },
-        toggleTheme(){
-          this.theme = this.theme === 'light' ? 'dark' : 'light';
-          localStorage.setItem('okx_theme', this.theme);
-        },
+        cardClass(item){ if(!item.hasPosition) return 'empty'; return item.position.direction === '空' ? 'short' : 'long'; },
+        toggle(key){ this.expanded[key]=!this.expanded[key]; },
+        toggleTheme(){ this.theme=this.theme==='light'?'dark':'light'; localStorage.setItem('okx_theme', this.theme); },
         async load(){
-          const res = await fetch('/api/status');
-          this.state = await res.json();
-          if (typeof this.state.rank_type === 'string') {
-            this.selectedRankType = this.state.rank_type;
-          }
-          if (typeof this.state.update_interval_seconds !== 'undefined') {
-            this.settingsInterval = String(this.state.update_interval_seconds);
-          }
+          const res=await fetch('/api/status');
+          this.state=await res.json();
+          if(typeof this.state.rank_type==='string') this.selectedRankType=this.state.rank_type;
+          if(typeof this.state.update_interval_seconds!=='undefined') this.settingsInterval=String(this.state.update_interval_seconds);
         },
-        openSettings(){
-          this.showSettings = true;
-          this.settingsInterval = String(this.state.update_interval_seconds || this.settingsInterval || 20);
-        },
+        openSettings(){ this.showSettings=true; this.settingsInterval=String(this.state.update_interval_seconds || this.settingsInterval || 20); },
         async saveSettings(){
-          const res = await fetch('/api/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ update_interval_seconds: this.settingsInterval })
-          });
-          const body = await res.json();
-          if (!res.ok || !body.ok) {
-            alert(body.message || '保存设置失败');
-            return;
-          }
-          this.showSettings = false;
-          await this.load();
+          const res=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({update_interval_seconds:this.settingsInterval})});
+          const body=await res.json();
+          if(!res.ok||!body.ok){ alert(body.message||'保存设置失败'); return; }
+          this.showSettings=false; await this.load();
         },
         async switchRankType(){
-          const res = await fetch('/api/rank/switch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: this.selectedRankType })
-          });
-          const body = await res.json();
-          if (!res.ok || !body.ok) {
-            alert(body.message || '切换排行失败');
-            await this.load();
-            return;
-          }
-          this.expanded = {};
-          await this.load();
+          const res=await fetch('/api/rank/switch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:this.selectedRankType})});
+          const body=await res.json();
+          if(!res.ok||!body.ok){ alert(body.message||'切换排行失败'); await this.load(); return; }
+          this.expanded={}; await this.load();
         },
-        init(){ this.load(); setInterval(()=>this.load(), 5000); }
+        init(){ this.load(); setInterval(()=>this.load(),5000); }
       }
     }
   </script>

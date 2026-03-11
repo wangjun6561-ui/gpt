@@ -23,6 +23,7 @@ class TraderConfig:
     name: str
     platform: str
     unique_name: str
+    aum: float = 0.0
 
 
 class OKXMonitor:
@@ -55,6 +56,7 @@ class OKXMonitor:
 
         self.previous_trades: Dict[str, List[str]] = {}
         self.latest_positions: Dict[str, Dict[str, Any]] = {}
+        self.recent_liq_panel: Dict[str, str] = {"eth": "--", "btc": "--", "sol": "--", "okx": "--"}
         self._position_cursor = 0
         self._load_trades_history()
 
@@ -103,7 +105,7 @@ class OKXMonitor:
         for item in self.config.get("traders", []):
             if str(item.get("platform", "")).lower() != "okx":
                 continue
-            traders.append(TraderConfig(name=item["name"], platform="okx", unique_name=item["uniqueName"]))
+            traders.append(TraderConfig(name=item["name"], platform="okx", unique_name=item["uniqueName"], aum=0.0))
         if not traders:
             raise ValueError("config.json 中未配置 okx 博主")
         return traders
@@ -259,6 +261,7 @@ class OKXMonitor:
                     name=str(row.get("nickName", unique_name)),
                     platform="okx",
                     unique_name=unique_name,
+                    aum=float(row.get("aum", 0) or 0),
                 ))
 
         return all_traders
@@ -269,7 +272,7 @@ class OKXMonitor:
             return 0
 
         with self.refresh_lock:
-            self.traders = list(traders)
+            self.traders = sorted(list(traders), key=lambda x: x.aum, reverse=True)
             self._position_cursor = 0
             self.current_rank_type = rank_type
             # 切换为临时列表时只清空内存快照，不修改历史文件
@@ -296,15 +299,17 @@ class OKXMonitor:
 
     def switch_to_all_rank_traders(self) -> int:
         config_ids = {t.unique_name for t in self.base_traders}
-        merged: List[TraderConfig] = []
-        seen: Set[str] = set()
+        merged_map: Dict[str, TraderConfig] = {}
 
         for rank_type in self.ALL_RANK_TYPES:
             for trader in self.fetch_follow_rank_traders(rank_type):
-                if trader.unique_name in config_ids or trader.unique_name in seen:
+                if trader.unique_name in config_ids:
                     continue
-                seen.add(trader.unique_name)
-                merged.append(trader)
+                prev = merged_map.get(trader.unique_name)
+                if prev is None or trader.aum > prev.aum:
+                    merged_map[trader.unique_name] = trader
+
+        merged = sorted(merged_map.values(), key=lambda x: x.aum, reverse=True)
 
         if not merged:
             return 0
@@ -405,11 +410,13 @@ class OKXMonitor:
             "avgPx": self.format_number(pos.get("avgPx", 0), 8),
             "uplRate": f"{upl_ratio * 100:.2f}%",
             "coinAmount": self.format_number(coin_amount, 6),
+            "coinAmountValue": coin_amount,
             "contracts": self.format_number(abs(pos_size), 4),
             "markPx": self.format_number(pos.get("markPx", 0), 8),
             "margin": self.format_number(margin_value, 4),
             "marginValue": margin_value,
             "notionalUsd": self.format_number(pos.get("notionalUsd", 0), 4),
+            "notionalValue": float(pos.get("notionalUsd", 0) or 0),
             "upl": self.format_number(pos.get("upl", 0), 4),
             "liqPx": liq_px,
             "mgnRate": f"{mgn_ratio * 100:.2f}%",
@@ -420,12 +427,42 @@ class OKXMonitor:
     def _pick_primary_position(all_positions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not all_positions:
             return None
-        priority = ["ETH-USDT-SWAP", "BTC-USDT-SWAP", "SOL-USDT-SWAP"]
-        by_inst = {p.get("instId"): p for p in all_positions}
-        for inst in priority:
-            if inst in by_inst:
-                return by_inst[inst]
-        return all_positions[0]
+        priority = ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "OKB-USDT-SWAP"]
+        candidates = [p for p in all_positions if p.get("instId") in priority]
+        if candidates:
+            return sorted(candidates, key=lambda x: float(x.get("coinAmountValue", 0)), reverse=True)[0]
+        return sorted(all_positions, key=lambda x: float(x.get("coinAmountValue", 0)), reverse=True)[0]
+
+    @staticmethod
+    def _build_recent_liq_panel(items: List[Dict[str, Any]]) -> Dict[str, str]:
+        coin_keys = ["eth", "btc", "sol", "okx"]
+        best: Dict[str, Tuple[float, str]] = {}
+        for item in items:
+            for pos in item.get("positions", []):
+                symbol = str(pos.get("symbol", ""))
+                base = symbol.split("/")[0] if "/" in symbol else ""
+                if base not in coin_keys:
+                    continue
+                liq = str(pos.get("liqPx", "--"))
+                mark = str(pos.get("markPx", "0"))
+                if liq in ("", "--"):
+                    continue
+                try:
+                    liq_v = float(liq)
+                    mark_v = float(mark)
+                    if liq_v <= 0 or mark_v <= 0:
+                        continue
+                    score = abs(liq_v - mark_v) / mark_v
+                except (TypeError, ValueError):
+                    continue
+                prev = best.get(base)
+                if prev is None or score < prev[0]:
+                    best[base] = (score, f"{liq}U")
+
+        panel = {k: "--" for k in coin_keys}
+        for k, (_, v) in best.items():
+            panel[k] = v
+        return panel
 
     def refresh_positions(self, unique_names: Optional[Set[str]] = None):
         traders = self._get_traders_snapshot()
@@ -454,6 +491,7 @@ class OKXMonitor:
                         "name": trader.name,
                         "platform": trader.platform,
                         "uniqueName": trader.unique_name,
+                        "traderAum": trader.aum,
                         "hasPosition": False,
                         "position": None,
                         "positions": [],
@@ -472,6 +510,7 @@ class OKXMonitor:
                     "name": trader.name,
                     "platform": trader.platform,
                     "uniqueName": trader.unique_name,
+                    "traderAum": trader.aum,
                     "hasPosition": bool(primary),
                     "position": primary,
                     "positions": all_views,
@@ -481,18 +520,26 @@ class OKXMonitor:
                 }
 
         # 博主级排序：有持仓在前，空仓在后；有持仓时按主仓保证金降序
+        def _sort_key(item: Tuple[str, Dict[str, Any]]) -> Tuple[float, float, str]:
+            data = item[1]
+            has_pos_rank = 0 if data.get("hasPosition") else 1
+            if self.current_rank_type != "__config__":
+                primary = -float(data.get("traderAum", 0) or 0)
+            else:
+                primary = -float(data.get("position", {}).get("notionalValue", 0) if data.get("position") else 0)
+            return (has_pos_rank, primary, data.get("name", ""))
+
         sorted_items = sorted(
             ((k, v) for k, v in snapshot.items() if k in active_unique_names),
-            key=lambda x: (
-                0 if x[1].get("hasPosition") else 1,
-                -float(x[1].get("position", {}).get("marginValue", 0) if x[1].get("position") else 0),
-                x[1].get("name", ""),
-            ),
+            key=_sort_key,
         )
+
+        liq_panel = self._build_recent_liq_panel([v for _, v in sorted_items])
 
         with self.state_lock:
             self.latest_positions = dict(sorted_items)
             self.last_refresh_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.recent_liq_panel = liq_panel
 
 
     def refresh_positions_round_robin(self):
@@ -718,6 +765,7 @@ def create_flask_app(monitor: OKXMonitor) -> Flask:
                 "items": list(monitor.latest_positions.values()),
                 "rank_type": monitor.current_rank_type,
                 "update_interval_seconds": monitor.update_interval_seconds,
+                "recent_liq_panel": monitor.recent_liq_panel,
             }
         return jsonify(payload)
 

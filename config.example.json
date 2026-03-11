@@ -1,0 +1,49 @@
+{
+  "debug": false,
+  "interval_seconds": 20,
+  "data_dir": "data",
+  "web": {
+    "host": "0.0.0.0",
+    "port": 8080
+  },
+  "okx": {
+    "trades_limit": 8,
+    "follow_rank_size": 9,
+    "follow_rank_pages": 1,
+    "contract_values": {
+      "ETH-USDT-SWAP": 0.1,
+      "BTC-USDT-SWAP": 0.01,
+      "SOL-USDT-SWAP": 1
+    },
+    "position_batch_size": 3,
+    "position_batch_interval_seconds": 10
+  },
+  "traders": [
+    {
+      "name": "示例博主A",
+      "platform": "okx",
+      "uniqueName": "15D169B3F29FAC0D"
+    },
+    {
+      "name": "示例博主B",
+      "platform": "okx",
+      "uniqueName": "REPLACE_WITH_UNIQUENAME"
+    }
+  ],
+  "notification": {
+    "serverchan": {
+      "enabled": false,
+      "sendkey": "YOUR_SERVERCHAN_SENDKEY_HERE",
+      "channel": "1"
+    },
+    "email": {
+      "enabled": false,
+      "sender_email": "YOUR_EMAIL@qq.com",
+      "sender_password": "YOUR_EMAIL_AUTH_CODE",
+      "receiver_email": "YOUR_RECEIVER_EMAIL@example.com",
+      "smtp_server": "smtp.qq.com",
+      "smtp_port": 465,
+      "use_ssl": true
+    }
+  }
+}

@@ -24,6 +24,10 @@ jobs:
 
       - run: dart run build_runner build --delete-conflicting-outputs
 
+      # 自动修复 Android v1 embedding 问题
+      - name: Fix Android v1 embedding
+        run: flutter create --platforms android . --project-name taskbox 2>/dev/null || true
+
       - run: flutter build apk --release
 
       - uses: actions/upload-artifact@v4

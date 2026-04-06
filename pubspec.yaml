@@ -1,0 +1,33 @@
+name: taskbox
+description: TaskBox Android app
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.5.1
+  dio: ^5.7.0
+  isar: ^3.1.8
+  isar_flutter_libs: ^3.1.8
+  path_provider: ^2.1.4
+  home_widget: ^0.6.0
+  audioplayers: ^6.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.12
+  isar_generator: ^3.1.8
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/sounds/complete.mp3
+    - assets/sounds/wheel_tick.mp3
+    - assets/sounds/wheel_stop.mp3

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
@@ -10,6 +13,7 @@ class IsarService {
   IsarService._();
 
   static final IsarService instance = IsarService._();
+  static const String _legacyExportFileName = 'taskbox_legacy_export.json';
   late final Database db;
 
   Future<void> initialize() async {
@@ -58,7 +62,10 @@ class IsarService {
       },
     );
 
-    await _seedDataIfNeeded();
+    final migrated = await _migrateFromLegacyIsarIfNeeded();
+    if (!migrated) {
+      await _seedDataIfNeeded();
+    }
   }
 
   bool get _isInitialized {
@@ -66,6 +73,94 @@ class IsarService {
       return db.isOpen;
     } catch (_) {
       return false;
+    }
+  }
+
+  Future<bool> _migrateFromLegacyIsarIfNeeded() async {
+    final countResult = await db.rawQuery('SELECT COUNT(*) AS c FROM boxes');
+    final hasBoxes = (countResult.first['c'] as int) > 0;
+    if (hasBoxes) return false;
+
+    final databasesPath = await getDatabasesPath();
+    final hasLegacyIsarFiles = await _hasLegacyIsarFiles(databasesPath);
+    if (!hasLegacyIsarFiles) return false;
+
+    final exportFile = File(p.join(databasesPath, _legacyExportFileName));
+    if (!await exportFile.exists()) {
+      // Legacy Isar data exists. Avoid seeding defaults so we never overwrite old user data
+      // before migration data is exported on a later version.
+      await _ensureSettingsRow();
+      return true;
+    }
+
+    final raw = await exportFile.readAsString();
+    final payload = jsonDecode(raw) as Map<String, dynamic>;
+
+    await db.transaction((txn) async {
+      final boxes = (payload['boxes'] as List<dynamic>? ?? const [])
+          .cast<Map<String, dynamic>>();
+      for (final box in boxes) {
+        await txn.insert('boxes', {
+          'id': box['id'] as int?,
+          'name': box['name'] as String? ?? '',
+          'color': box['color'] as String? ?? '',
+          'icon': box['icon'] as String? ?? '',
+          'sort_order': box['sort_order'] as int? ?? 0,
+          'description': box['description'] as String?,
+          'is_default': (box['is_default'] as bool? ?? false) ? 1 : (box['is_default'] as int? ?? 0),
+          'created_at': box['created_at'] as String? ?? DateTime.now().toIso8601String(),
+        });
+      }
+
+      final tasks = (payload['tasks'] as List<dynamic>? ?? const [])
+          .cast<Map<String, dynamic>>();
+      for (final task in tasks) {
+        await txn.insert('tasks', {
+          'id': task['id'] as int?,
+          'box_id': task['box_id'] as int? ?? 0,
+          'content': task['content'] as String? ?? '',
+          'is_completed': (task['is_completed'] as bool? ?? false)
+              ? 1
+              : (task['is_completed'] as int? ?? 0),
+          'sort_order': task['sort_order'] as int? ?? 0,
+          'priority': task['priority'] as int? ?? 1,
+          'due_date': task['due_date'] as String?,
+          'completed_at': task['completed_at'] as String?,
+          'created_at': task['created_at'] as String? ?? DateTime.now().toIso8601String(),
+        });
+      }
+
+      final settings = payload['settings'] as Map<String, dynamic>?;
+      if (settings == null) {
+        await txn.insert('settings', SettingsModel().toMap()..remove('id'));
+      } else {
+        await txn.insert('settings', {
+          'id': settings['id'] as int?,
+          'deepseek_api_key': settings['deepseek_api_key'] as String? ?? '',
+          'theme_mode': settings['theme_mode'] as String? ?? 'system',
+        });
+      }
+    });
+
+    return true;
+  }
+
+  Future<bool> _hasLegacyIsarFiles(String databasesPath) async {
+    final directory = Directory(databasesPath);
+    if (!await directory.exists()) return false;
+
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is File && p.extension(entity.path).toLowerCase() == '.isar') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _ensureSettingsRow() async {
+    final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM settings');
+    if ((rows.first['c'] as int) == 0) {
+      await db.insert('settings', SettingsModel().toMap()..remove('id'));
     }
   }
 
